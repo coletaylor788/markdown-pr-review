@@ -1,7 +1,7 @@
 import { ItemView, WorkspaceLeaf, Notice, setIcon } from "obsidian";
 import type MdPrReviewPlugin from "./main";
 import type { RepoRef } from "./main";
-import { PullRequest, listPullRequests, markdownFiles } from "./github";
+import { PullRequest, listPullRequests, markdownFiles, currentUser } from "./github";
 
 export const PR_QUEUE_VIEW_TYPE = "mdpr-pr-queue";
 
@@ -13,6 +13,9 @@ export class PrQueueView extends ItemView {
 	private searchFilter = "";
 	private loading = false;
 	private errorMsg = "";
+	private myLogin: string | null = null;
+	private myLoginResolved = false;
+	private bodyEl: HTMLElement | null = null;
 
 	constructor(leaf: WorkspaceLeaf, plugin: MdPrReviewPlugin) {
 		super(leaf);
@@ -53,8 +56,12 @@ export class PrQueueView extends ItemView {
 				repo = this.repos[0];
 				await this.plugin.setSelectedRepo(repo);
 			}
+			if (!this.myLoginResolved) {
+				this.myLogin = await currentUser(this.plugin.settings.ghPath, repo.repoRoot);
+				this.myLoginResolved = true;
+			}
+			// Author is filtered client-side (partial match); only search goes to gh.
 			this.prs = await listPullRequests(this.plugin.settings.ghPath, repo.repoRoot, {
-				author: this.authorFilter,
 				search: this.searchFilter,
 			});
 		} catch (e) {
@@ -66,9 +73,21 @@ export class PrQueueView extends ItemView {
 		}
 	}
 
+	private matchesAuthor(pr: PullRequest, needle: string): boolean {
+		const login = (pr.author?.login ?? "").toLowerCase();
+		const name = (pr.author?.name ?? "").toLowerCase();
+		if (needle === "@me") return this.myLogin ? login === this.myLogin.toLowerCase() : false;
+		return login.includes(needle) || name.includes(needle);
+	}
+
 	private visiblePrs(): PullRequest[] {
-		if (!this.plugin.settings.markdownOnlyQueue) return this.prs;
-		return this.prs.filter((pr) => markdownFiles(pr).length > 0);
+		let list = this.prs;
+		if (this.plugin.settings.markdownOnlyQueue) {
+			list = list.filter((pr) => markdownFiles(pr).length > 0);
+		}
+		const needle = this.authorFilter.trim().toLowerCase();
+		if (needle) list = list.filter((pr) => this.matchesAuthor(pr, needle));
+		return list;
 	}
 
 	private activeIndex(visible: PullRequest[]): number {
@@ -91,9 +110,17 @@ export class PrQueueView extends ItemView {
 		const c = this.contentEl;
 		c.empty();
 		c.addClass("mdpr-queue");
-
 		this.renderFilters(c);
 		this.renderSessionBar(c);
+		this.bodyEl = c.createDiv({ cls: "mdpr-queue-body" });
+		this.renderBody();
+	}
+
+	/** Re-render only the list/status area, so filter inputs keep focus. */
+	private renderBody(): void {
+		const c = this.bodyEl;
+		if (!c) return;
+		c.empty();
 
 		if (this.loading) {
 			c.createDiv({ cls: "mdpr-queue-status", text: "Loading pull requests…" });
@@ -127,7 +154,6 @@ export class PrQueueView extends ItemView {
 		setIcon(refreshBtn, "refresh-cw");
 		refreshBtn.onclick = () => void this.refresh();
 
-		// Repo selector (handles vaults that symlink multiple repos).
 		const repoRow = header.createDiv({ cls: "mdpr-repo-row" });
 		repoRow.createSpan({ cls: "mdpr-repo-label", text: "Repo" });
 		const select = repoRow.createEl("select", { cls: "mdpr-select" });
@@ -150,17 +176,17 @@ export class PrQueueView extends ItemView {
 
 		const authorInput = header.createEl("input", {
 			cls: "mdpr-input",
-			attr: { type: "text", placeholder: "Author (login or @me)" },
+			attr: { type: "text", placeholder: "Filter by author (partial, or @me)" },
 		});
 		authorInput.value = this.authorFilter;
-		authorInput.oninput = () => (this.authorFilter = authorInput.value);
-		authorInput.onkeydown = (e) => {
-			if (e.key === "Enter") void this.refresh();
+		authorInput.oninput = () => {
+			this.authorFilter = authorInput.value;
+			this.renderBody(); // live, partial — list only so the input keeps focus
 		};
 
 		const searchInput = header.createEl("input", {
 			cls: "mdpr-input",
-			attr: { type: "text", placeholder: 'Search (e.g. "label:design")' },
+			attr: { type: "text", placeholder: 'gh search (e.g. "label:design") — Enter' },
 		});
 		searchInput.value = this.searchFilter;
 		searchInput.oninput = () => (this.searchFilter = searchInput.value);
@@ -174,7 +200,7 @@ export class PrQueueView extends ItemView {
 		cb.onchange = async () => {
 			this.plugin.settings.markdownOnlyQueue = cb.checked;
 			await this.plugin.saveSettings();
-			this.render();
+			this.renderBody();
 		};
 		toggleRow.createSpan({ text: "Markdown changes only" });
 	}

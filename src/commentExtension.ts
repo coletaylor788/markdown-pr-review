@@ -19,6 +19,13 @@ function mark(id: string, resolved: boolean): Decoration {
 	});
 }
 
+let clickHandler: ((id: string) => void) | null = null;
+
+/** Called with the comment id when the user clicks a line that has a comment. */
+export function setCommentClickHandler(fn: (id: string) => void): void {
+	clickHandler = fn;
+}
+
 const commentField = StateField.define<DecorationSet>({
 	create() {
 		return Decoration.none;
@@ -39,7 +46,30 @@ const commentField = StateField.define<DecorationSet>({
 	provide: (f) => EditorView.decorations.from(f),
 });
 
-export const commentExtension: Extension = [commentField];
+// Clicking anywhere on a line that carries a comment reveals it in the panel.
+const commentClicks = EditorView.domEventHandlers({
+	mousedown(event: MouseEvent, view: EditorView) {
+		if (!clickHandler) return false;
+		const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+		if (pos == null) return false;
+		const line = view.state.doc.lineAt(pos);
+		const set = view.state.field(commentField, false);
+		if (!set) return false;
+		let found: string | null = null;
+		set.between(line.from, line.to, (_from, _to, value) => {
+			const attrs = value.spec?.attributes as Record<string, string> | undefined;
+			const id = attrs?.["data-mdpr-comment"];
+			if (id) {
+				found = id;
+				return false; // stop iterating
+			}
+		});
+		if (found) clickHandler(found);
+		return false; // let the editor handle the click normally
+	},
+});
+
+export const commentExtension: Extension = [commentField, commentClicks];
 
 export function setComments(view: EditorView, ranges: CommentRange[]): void {
 	view.dispatch({ effects: setCommentRanges.of(ranges) });

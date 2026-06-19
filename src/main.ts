@@ -46,7 +46,7 @@ import { locate, resolveBase, repoRootOf, isTreeDirty, GitError } from "./git";
 import { PullRequest, markdownFiles, checkoutPullRequest } from "./github";
 import { PR_QUEUE_VIEW_TYPE, PrQueueView } from "./prQueueView";
 import { COMMENT_PANEL_VIEW_TYPE, CommentPanelView } from "./commentPanel";
-import { commentExtension, setComments } from "./commentExtension";
+import { commentExtension, setComments, setCommentClickHandler } from "./commentExtension";
 import { captureAnchor, resolveAnchor, ResolvedRange } from "./anchor";
 import {
 	Comment,
@@ -99,6 +99,7 @@ export default class MdPrReviewPlugin extends Plugin {
 	selectedRepo: RepoRef | null = null;
 	private activeItems: ActiveCommentItem[] = [];
 	private currentRepoRoot: string | null = null;
+	private activeFileKey: string | null = null;
 
 	async onload(): Promise<void> {
 		await this.loadPersisted();
@@ -156,6 +157,9 @@ export default class MdPrReviewPlugin extends Plugin {
 			})
 		);
 		this.app.workspace.onLayoutReady(() => void this.onActiveFileChanged());
+
+		// Clicking a commented line in the editor reveals it in the panel.
+		setCommentClickHandler((id) => void this.revealComment(id));
 
 		this.addCommand({
 			id: "toggle-pr-diff-highlight",
@@ -460,14 +464,14 @@ export default class MdPrReviewPlugin extends Plugin {
 	async onActiveFileChanged(): Promise<void> {
 		const view = this.activeMarkdownView();
 		const file = view?.file;
-		if (!view || !file) {
-			this.activeDoc = null;
-			this.activeItems = [];
-			this.refreshCommentPanel();
-			return;
-		}
-		const abs = this.absPathOf(file);
-		if (!abs) {
+		const abs = file ? this.absPathOf(file) : null;
+		// Skip when the active file hasn't changed (e.g. clicking into our own
+		// side panels): re-rendering the panel here would destroy a button
+		// mid-click and require a second click.
+		if (abs === this.activeFileKey) return;
+		this.activeFileKey = abs;
+
+		if (!view || !file || !abs) {
 			this.activeDoc = null;
 			this.activeItems = [];
 			this.refreshCommentPanel();
@@ -532,6 +536,22 @@ export default class MdPrReviewPlugin extends Plugin {
 			.forEach((leaf) => {
 				if (leaf.view instanceof CommentPanelView) leaf.view.render();
 			});
+	}
+
+	/** Reveal a comment in the panel (driven by clicking its line in the editor). */
+	async revealComment(id: string): Promise<void> {
+		let leaf: WorkspaceLeaf | null =
+			this.app.workspace.getLeavesOfType(COMMENT_PANEL_VIEW_TYPE)[0] ?? null;
+		if (!leaf) {
+			const right = this.app.workspace.getRightLeaf(false);
+			if (right) {
+				await right.setViewState({ type: COMMENT_PANEL_VIEW_TYPE, active: false });
+				leaf = right;
+			}
+		}
+		if (!leaf) return;
+		this.app.workspace.revealLeaf(leaf);
+		if (leaf.view instanceof CommentPanelView) leaf.view.highlight(id);
 	}
 
 	private async saveActiveSidecar(): Promise<void> {

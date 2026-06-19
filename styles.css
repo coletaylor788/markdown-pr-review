@@ -251,6 +251,10 @@
 .mdpr-comment-row.mdpr-stale {
 	box-shadow: inset 2px 0 0 var(--text-error);
 }
+.mdpr-comment-row.mdpr-flash {
+	background: var(--background-modifier-active-hover);
+	box-shadow: inset 3px 0 0 var(--interactive-accent);
+}
 
 .mdpr-comment-quote {
 	font-size: var(--font-ui-smaller);

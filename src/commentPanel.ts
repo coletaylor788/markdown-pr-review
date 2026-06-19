@@ -59,7 +59,10 @@ export class CommentPanelView extends ItemView {
 
 		const list = c.createDiv({ cls: "mdpr-comments-list" });
 		for (const item of items) {
-			const row = list.createDiv({ cls: "mdpr-comment-row" });
+			const row = list.createDiv({
+				cls: "mdpr-comment-row",
+				attr: { "data-mdpr-row": item.comment.id },
+			});
 			if (item.comment.status === "resolved") row.addClass("mdpr-resolved");
 			if (!item.range) row.addClass("mdpr-stale");
 
@@ -96,6 +99,19 @@ export class CommentPanelView extends ItemView {
 				void this.plugin.deleteComment(id)
 			);
 		}
+	}
+
+	/** Flash and scroll a comment row into view (driven by clicking it in the editor). */
+	highlight(id: string): void {
+		this.contentEl
+			.querySelectorAll(".mdpr-comment-row.mdpr-flash")
+			.forEach((el) => el.removeClass("mdpr-flash"));
+		const row = this.contentEl.querySelector(
+			`.mdpr-comment-row[data-mdpr-row="${id}"]`
+		) as HTMLElement | null;
+		if (!row) return;
+		row.addClass("mdpr-flash");
+		row.scrollIntoView({ block: "center", behavior: "smooth" });
 	}
 
 	private iconButton(

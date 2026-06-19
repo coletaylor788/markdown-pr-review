@@ -22,7 +22,6 @@ export interface PullRequest {
 }
 
 export interface ListOptions {
-	author?: string;
 	search?: string;
 	limit?: number;
 }
@@ -51,9 +50,8 @@ export async function listPullRequests(
 		"--limit",
 		String(opts.limit ?? 100),
 	];
-	const author = opts.author?.trim();
+	// Author is filtered client-side (partial match), so it is not passed here.
 	const search = opts.search?.trim();
-	if (author) args.push("--author", author);
 	if (search) args.push("--search", search);
 
 	const res = await run(ghPath, args, { cwd: repoRoot, timeoutMs: 30000 });
@@ -66,6 +64,18 @@ export async function listPullRequests(
 	} catch (e) {
 		throw new GhError("Could not parse gh output: " + String(e));
 	}
+}
+
+/** The authenticated user's login (for resolving the "@me" author filter). */
+export async function currentUser(
+	ghPath: string,
+	repoRoot: string
+): Promise<string | null> {
+	const res = await run(ghPath, ["api", "user", "--jq", ".login"], {
+		cwd: repoRoot,
+		timeoutMs: 15000,
+	});
+	return res.code === 0 ? res.stdout.trim() || null : null;
 }
 
 export async function checkoutPullRequest(
