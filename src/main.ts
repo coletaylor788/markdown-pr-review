@@ -10,6 +10,10 @@ import { EditorView } from "@codemirror/view";
 import * as path from "path";
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+function genId(): string {
+	return "c_" + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
+}
 import { MdPrReviewSettings, DEFAULT_SETTINGS } from "./settings";
 import { MdPrReviewSettingTab } from "./settingsTab";
 import {
@@ -23,6 +27,28 @@ import {
 import { locate, resolveBase, repoRootOf, isTreeDirty, GitError } from "./git";
 import { PullRequest, markdownFiles, checkoutPullRequest } from "./github";
 import { PR_QUEUE_VIEW_TYPE, PrQueueView } from "./prQueueView";
+import { COMMENT_PANEL_VIEW_TYPE, CommentPanelView } from "./commentPanel";
+import { commentExtension, setComments } from "./commentExtension";
+import { captureAnchor, resolveAnchor, ResolvedRange } from "./anchor";
+import {
+	Comment,
+	Sidecar,
+	loadSidecar,
+	saveSidecar,
+	ensureGitignore,
+} from "./sidecar";
+import { CommentModal } from "./commentModal";
+
+export interface ActiveDoc {
+	repoRoot: string;
+	relPath: string;
+	sidecar: Sidecar;
+}
+
+export interface ActiveCommentItem {
+	comment: Comment;
+	range: ResolvedRange | null;
+}
 
 export interface QueueSession {
 	repoRoot: string;
@@ -39,18 +65,27 @@ export default class MdPrReviewPlugin extends Plugin {
 	settings!: MdPrReviewSettings;
 	session: QueueSession | null = null;
 	reviewed: Set<string> = new Set();
+	activeDoc: ActiveDoc | null = null;
+	private activeItems: ActiveCommentItem[] = [];
 	private currentRepoRoot: string | null = null;
 
 	async onload(): Promise<void> {
 		await this.loadPersisted();
 		setLineBackground(this.settings.highlightLineBackground);
 
-		this.registerEditorExtension(diffExtension);
+		this.registerEditorExtension([diffExtension, commentExtension]);
 		this.registerView(PR_QUEUE_VIEW_TYPE, (leaf) => new PrQueueView(leaf, this));
+		this.registerView(
+			COMMENT_PANEL_VIEW_TYPE,
+			(leaf) => new CommentPanelView(leaf, this)
+		);
 		this.addSettingTab(new MdPrReviewSettingTab(this.app, this));
 
 		this.addRibbonIcon("git-pull-request", "Open PR review queue", () => {
 			void this.activateQueueView();
+		});
+		this.addRibbonIcon("message-square", "Open PR comments panel", () => {
+			void this.activateView(COMMENT_PANEL_VIEW_TYPE);
 		});
 
 		this.addCommand({
@@ -58,6 +93,30 @@ export default class MdPrReviewPlugin extends Plugin {
 			name: "Open PR review queue",
 			callback: () => void this.activateQueueView(),
 		});
+
+		this.addCommand({
+			id: "open-comments-panel",
+			name: "Open PR comments panel",
+			callback: () => void this.activateView(COMMENT_PANEL_VIEW_TYPE),
+		});
+
+		this.addCommand({
+			id: "add-comment",
+			name: "Add comment from selection",
+			checkCallback: (checking) => {
+				const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+				if (!view || view.file == null) return false;
+				if (!checking) void this.addCommentFromSelection();
+				return true;
+			},
+		});
+
+		this.registerEvent(
+			this.app.workspace.on("active-leaf-change", () => {
+				void this.onActiveFileChanged();
+			})
+		);
+		this.app.workspace.onLayoutReady(() => void this.onActiveFileChanged());
 
 		this.addCommand({
 			id: "toggle-pr-diff-highlight",
@@ -166,12 +225,15 @@ export default class MdPrReviewPlugin extends Plugin {
 	/* --------------------------------------------------------------------- */
 
 	async activateQueueView(): Promise<void> {
+		await this.activateView(PR_QUEUE_VIEW_TYPE);
+	}
+
+	async activateView(viewType: string): Promise<void> {
 		const { workspace } = this.app;
-		let leaf: WorkspaceLeaf | null =
-			workspace.getLeavesOfType(PR_QUEUE_VIEW_TYPE)[0] ?? null;
+		let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(viewType)[0] ?? null;
 		if (!leaf) {
 			leaf = workspace.getRightLeaf(false);
-			if (leaf) await leaf.setViewState({ type: PR_QUEUE_VIEW_TYPE, active: true });
+			if (leaf) await leaf.setViewState({ type: viewType, active: true });
 		}
 		if (leaf) workspace.revealLeaf(leaf);
 	}
@@ -305,6 +367,197 @@ export default class MdPrReviewPlugin extends Plugin {
 		this.app.workspace.getLeavesOfType(PR_QUEUE_VIEW_TYPE).forEach((leaf) => {
 			if (leaf.view instanceof PrQueueView) leaf.view.render();
 		});
+	}
+
+	/* --------------------------------------------------------------------- */
+	/* Comments                                                               */
+	/* --------------------------------------------------------------------- */
+
+	private activeMarkdownView(): MarkdownView | null {
+		return this.app.workspace.getActiveViewOfType(MarkdownView);
+	}
+
+	async onActiveFileChanged(): Promise<void> {
+		const view = this.activeMarkdownView();
+		const file = view?.file;
+		if (!view || !file) {
+			this.activeDoc = null;
+			this.activeItems = [];
+			this.refreshCommentPanel();
+			return;
+		}
+		const abs = this.absPathOf(file);
+		if (!abs) {
+			this.activeDoc = null;
+			this.activeItems = [];
+			this.refreshCommentPanel();
+			return;
+		}
+		try {
+			const loc = await locate(this.settings.gitPath, abs);
+			const sidecar = await loadSidecar(
+				loc.repoRoot,
+				this.settings.sidecarDir,
+				loc.relPath
+			);
+			this.activeDoc = { repoRoot: loc.repoRoot, relPath: loc.relPath, sidecar };
+		} catch {
+			this.activeDoc = null;
+			this.activeItems = [];
+			this.refreshCommentPanel();
+			return;
+		}
+		this.refreshComments();
+	}
+
+	/** Re-resolve anchors against the live editor and push marks + panel. */
+	refreshComments(): void {
+		const view = this.activeMarkdownView();
+		const cm = view ? this.cmOf(view) : null;
+		if (!this.activeDoc) {
+			this.activeItems = [];
+		} else if (!cm) {
+			this.activeItems = this.activeDoc.sidecar.comments.map((comment) => ({
+				comment,
+				range: null,
+			}));
+		} else {
+			const docText = cm.state.doc.toString();
+			this.activeItems = this.activeDoc.sidecar.comments.map((comment) => ({
+				comment,
+				range: resolveAnchor(docText, comment.anchor),
+			}));
+			setComments(
+				cm,
+				this.activeItems
+					.filter((i) => i.range)
+					.map((i) => ({
+						id: i.comment.id,
+						from: i.range!.from,
+						to: i.range!.to,
+						resolved: i.comment.status === "resolved",
+					}))
+			);
+		}
+		this.refreshCommentPanel();
+	}
+
+	activeCommentItems(): ActiveCommentItem[] {
+		return this.activeItems;
+	}
+
+	private refreshCommentPanel(): void {
+		this.app.workspace
+			.getLeavesOfType(COMMENT_PANEL_VIEW_TYPE)
+			.forEach((leaf) => {
+				if (leaf.view instanceof CommentPanelView) leaf.view.render();
+			});
+	}
+
+	private async saveActiveSidecar(): Promise<void> {
+		if (!this.activeDoc) return;
+		await saveSidecar(
+			this.activeDoc.repoRoot,
+			this.settings.sidecarDir,
+			this.activeDoc.relPath,
+			this.activeDoc.sidecar
+		);
+	}
+
+	async addCommentFromSelection(): Promise<void> {
+		const view = this.activeMarkdownView();
+		const cm = view ? this.cmOf(view) : null;
+		if (!view || !cm || !view.file) {
+			new Notice("Open a markdown file in editing view first.");
+			return;
+		}
+		if (!this.activeDoc) await this.onActiveFileChanged();
+		if (!this.activeDoc) {
+			new Notice("This file is not inside a git repository.");
+			return;
+		}
+		const sel = cm.state.selection.main;
+		if (sel.empty) {
+			new Notice("Select the text to comment on first.");
+			return;
+		}
+		const docText = cm.state.doc.toString();
+		const anchor = captureAnchor(docText, sel.from, sel.to);
+
+		new CommentModal(this.app, {
+			quote: anchor.quote,
+			onSubmit: async (body) => {
+				if (!body || !this.activeDoc) return;
+				const comment: Comment = {
+					id: genId(),
+					anchor,
+					body,
+					status: "open",
+					createdAt: new Date().toISOString(),
+				};
+				this.activeDoc.sidecar.comments.push(comment);
+				this.activeDoc.sidecar.pr = this.session?.prNumber;
+				this.activeDoc.sidecar.base =
+					this.session?.baseRef ?? this.settings.baseRefFallback;
+				await this.saveActiveSidecar();
+				await ensureGitignore(this.activeDoc.repoRoot, this.settings.sidecarDir).catch(
+					() => undefined
+				);
+				this.refreshComments();
+			},
+		}).open();
+	}
+
+	jumpToComment(id: string): void {
+		const view = this.activeMarkdownView();
+		const cm = view ? this.cmOf(view) : null;
+		const item = this.activeItems.find((i) => i.comment.id === id);
+		if (!cm || !item) return;
+		if (!item.range) {
+			new Notice("Anchor not found — the text may have changed (stale).");
+			return;
+		}
+		cm.dispatch({
+			selection: { anchor: item.range.from, head: item.range.to },
+			scrollIntoView: true,
+		});
+		cm.focus();
+	}
+
+	async toggleResolveComment(id: string): Promise<void> {
+		if (!this.activeDoc) return;
+		const comment = this.activeDoc.sidecar.comments.find((c) => c.id === id);
+		if (!comment) return;
+		comment.status = comment.status === "resolved" ? "open" : "resolved";
+		await this.saveActiveSidecar();
+		this.refreshComments();
+	}
+
+	editComment(id: string): void {
+		if (!this.activeDoc) return;
+		const comment = this.activeDoc.sidecar.comments.find((c) => c.id === id);
+		if (!comment) return;
+		new CommentModal(this.app, {
+			initial: comment.body,
+			quote: comment.anchor.quote,
+			onSubmit: async (body) => {
+				if (!body) return;
+				comment.body = body;
+				await this.saveActiveSidecar();
+				this.refreshComments();
+			},
+		}).open();
+	}
+
+	async deleteComment(id: string): Promise<void> {
+		if (!this.activeDoc) return;
+		const before = this.activeDoc.sidecar.comments.length;
+		this.activeDoc.sidecar.comments = this.activeDoc.sidecar.comments.filter(
+			(c) => c.id !== id
+		);
+		if (this.activeDoc.sidecar.comments.length === before) return;
+		await this.saveActiveSidecar();
+		this.refreshComments();
 	}
 
 	/* --------------------------------------------------------------------- */

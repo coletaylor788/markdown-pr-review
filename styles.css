@@ -187,3 +187,97 @@
 	display: inline-flex;
 	color: var(--color-green, #2ea043);
 }
+
+/* ------------------------------------------------------------------ */
+/* Comment marks (in the editor)                                       */
+/* ------------------------------------------------------------------ */
+
+.mdpr-comment-mark {
+	background-color: rgba(250, 204, 21, 0.22);
+	border-bottom: 1px dotted var(--color-yellow, #d29922);
+	border-radius: 2px;
+}
+.mdpr-comment-mark.mdpr-comment-resolved {
+	background-color: transparent;
+	border-bottom: 1px dotted var(--text-faint);
+}
+
+/* ------------------------------------------------------------------ */
+/* Comments panel                                                      */
+/* ------------------------------------------------------------------ */
+
+.mdpr-comments-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 8px;
+	border-bottom: 1px solid var(--background-modifier-border);
+	position: sticky;
+	top: 0;
+	background: var(--background-secondary);
+	z-index: 1;
+}
+
+.mdpr-comments-list {
+	display: flex;
+	flex-direction: column;
+}
+
+.mdpr-comment-row {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 8px;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+.mdpr-comment-row.mdpr-resolved {
+	opacity: 0.6;
+}
+.mdpr-comment-row.mdpr-stale {
+	box-shadow: inset 2px 0 0 var(--text-error);
+}
+
+.mdpr-comment-quote {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	border-left: 2px solid var(--background-modifier-border);
+	padding-left: 6px;
+	font-style: italic;
+}
+.mdpr-comment-body {
+	font-size: var(--font-ui-small);
+	white-space: pre-wrap;
+}
+
+.mdpr-comment-actions {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+.mdpr-stale-tag {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-error);
+	margin-right: auto;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+/* ------------------------------------------------------------------ */
+/* Comment modal                                                       */
+/* ------------------------------------------------------------------ */
+
+.mdpr-modal-quote {
+	margin: 4px 0 10px;
+	padding: 6px 8px;
+	background: var(--background-secondary);
+	border-left: 2px solid var(--interactive-accent);
+	border-radius: 2px;
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+	font-style: italic;
+	max-height: 6em;
+	overflow: auto;
+}
+.mdpr-modal-textarea {
+	width: 100%;
+}
