@@ -8,6 +8,7 @@ import {
 } from "obsidian";
 import { EditorView } from "@codemirror/view";
 import * as path from "path";
+import { promises as fsp } from "fs";
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -67,8 +68,20 @@ export interface ActiveCommentItem {
 	range: ResolvedRange | null;
 }
 
+/** A git repo reachable from the vault, possibly via a symlink. */
+export interface RepoRef {
+	/** Display name (the vault folder, or "(vault root)"). */
+	name: string;
+	/** Vault-relative directory that maps onto the repo (the symlink mount), "" for the vault root. */
+	vaultMount: string;
+	/** Absolute git toplevel (real path) to run git/gh in. */
+	repoRoot: string;
+}
+
 export interface QueueSession {
 	repoRoot: string;
+	/** Vault-relative mount, so changed files can be opened through a symlink. */
+	vaultMount: string;
 	prNumber: number;
 	/** Remote-qualified base ref to diff against, e.g. "origin/main". */
 	baseRef: string;
@@ -83,6 +96,7 @@ export default class MdPrReviewPlugin extends Plugin {
 	session: QueueSession | null = null;
 	reviewed: Set<string> = new Set();
 	activeDoc: ActiveDoc | null = null;
+	selectedRepo: RepoRef | null = null;
 	private activeItems: ActiveCommentItem[] = [];
 	private currentRepoRoot: string | null = null;
 
@@ -100,6 +114,14 @@ export default class MdPrReviewPlugin extends Plugin {
 
 		this.addRibbonIcon("git-pull-request", "Open PR review queue", () => {
 			void this.activateQueueView();
+		});
+		this.addRibbonIcon("git-compare", "Toggle PR diff highlight", () => {
+			const view = this.activeMarkdownView();
+			if (!view || !view.file) {
+				new Notice("Open a markdown file in a git repository first.");
+				return;
+			}
+			void this.toggleDiff(view);
 		});
 		this.addRibbonIcon("message-square", "Open PR comments panel", () => {
 			void this.activateView(COMMENT_PANEL_VIEW_TYPE);
@@ -255,24 +277,68 @@ export default class MdPrReviewPlugin extends Plugin {
 		if (leaf) workspace.revealLeaf(leaf);
 	}
 
-	async resolveRepoRoot(): Promise<string | null> {
+	/**
+	 * Find every git repo reachable from the vault: the vault root itself, plus
+	 * each top-level folder (following symlinks, so symlinked repos are found).
+	 */
+	async discoverRepos(): Promise<RepoRef[]> {
 		const adapter = this.app.vault.adapter;
-		if (!(adapter instanceof FileSystemAdapter)) return null;
+		if (!(adapter instanceof FileSystemAdapter)) return [];
 		const base = adapter.getBasePath();
-		const af = this.app.workspace.getActiveFile();
-		const cwd = af ? path.dirname(path.join(base, af.path)) : base;
-		this.currentRepoRoot = await repoRootOf(this.settings.gitPath, cwd);
-		return this.currentRepoRoot;
+		const out: RepoRef[] = [];
+		const seen = new Set<string>();
+
+		const baseRoot = await repoRootOf(this.settings.gitPath, base);
+		if (baseRoot) {
+			seen.add(baseRoot);
+			out.push({ name: "(vault root)", vaultMount: "", repoRoot: baseRoot });
+		}
+
+		let entries: Array<{ name: string; isDirectory(): boolean; isSymbolicLink(): boolean }> =
+			[];
+		try {
+			entries = await fsp.readdir(base, { withFileTypes: true });
+		} catch {
+			/* ignore */
+		}
+		for (const e of entries) {
+			if (e.name.startsWith(".")) continue;
+			const childPath = path.join(base, e.name);
+			let isDir = e.isDirectory();
+			if (e.isSymbolicLink()) {
+				try {
+					isDir = (await fsp.stat(childPath)).isDirectory();
+				} catch {
+					isDir = false;
+				}
+			}
+			if (!isDir) continue;
+			const root = await repoRootOf(this.settings.gitPath, childPath);
+			if (root && !seen.has(root)) {
+				seen.add(root);
+				out.push({ name: e.name, vaultMount: e.name, repoRoot: root });
+			}
+		}
+		return out;
+	}
+
+	async setSelectedRepo(ref: RepoRef | null): Promise<void> {
+		const changed = ref?.repoRoot !== this.selectedRepo?.repoRoot;
+		this.selectedRepo = ref;
+		this.currentRepoRoot = ref?.repoRoot ?? null;
+		if (changed) this.session = null;
+		await this.persist();
+		if (changed) this.refreshQueueView();
 	}
 
 	async openPullRequest(pr: PullRequest): Promise<void> {
-		const repoRoot = await this.resolveRepoRoot();
-		if (!repoRoot) {
-			new Notice("No git repository found for this vault.");
+		const repo = this.selectedRepo;
+		if (!repo) {
+			new Notice("Attach a repository in the PR queue first.");
 			return;
 		}
 		try {
-			if (await isTreeDirty(this.settings.gitPath, repoRoot)) {
+			if (await isTreeDirty(this.settings.gitPath, repo.repoRoot)) {
 				new Notice(
 					"Working tree has uncommitted changes — commit or stash before switching PRs."
 				);
@@ -284,14 +350,16 @@ export default class MdPrReviewPlugin extends Plugin {
 
 		new Notice(`Checking out PR #${pr.number}…`);
 		try {
-			await checkoutPullRequest(this.settings.ghPath, repoRoot, pr.number);
+			await checkoutPullRequest(this.settings.ghPath, repo.repoRoot, pr.number);
 		} catch (e) {
 			new Notice(`Checkout failed: ${(e as Error).message}`);
 			return;
 		}
 
+		this.currentRepoRoot = repo.repoRoot;
 		this.session = {
-			repoRoot,
+			repoRoot: repo.repoRoot,
+			vaultMount: repo.vaultMount,
 			prNumber: pr.number,
 			baseRef: `${this.settings.remote}/${pr.baseRefName}`,
 			headRefName: pr.headRefName,
@@ -324,21 +392,21 @@ export default class MdPrReviewPlugin extends Plugin {
 		if (!s || index < 0 || index >= s.mdFiles.length) return;
 		s.fileIndex = index;
 		await this.persist();
-		await this.openPrFile(s.repoRoot, s.mdFiles[index], s.baseRef);
+		await this.openPrFile(s.vaultMount, s.mdFiles[index], s.baseRef);
 		if (index === s.mdFiles.length - 1) this.markReviewed(s.prNumber);
 		this.refreshQueueView();
 	}
 
 	private async openPrFile(
-		repoRoot: string,
+		vaultMount: string,
 		relPath: string,
 		baseRef: string
 	): Promise<void> {
-		const vaultRel = this.repoRelToVaultRel(repoRoot, relPath);
-		if (!vaultRel) {
-			new Notice(`File is outside the vault: ${relPath}`);
-			return;
-		}
+		// The repo may be symlinked into the vault, so map via the vault mount,
+		// not the repo's real path.
+		const vaultRel = vaultMount
+			? `${vaultMount.replace(/\/+$/, "")}/${relPath}`
+			: relPath;
 		const file = await this.getFileWithRetry(vaultRel);
 		if (!file) {
 			new Notice(`Could not find ${vaultRel} in the vault.`);
@@ -350,15 +418,6 @@ export default class MdPrReviewPlugin extends Plugin {
 		if (view instanceof MarkdownView) {
 			await this.enableDiffForView(view, baseRef);
 		}
-	}
-
-	private repoRelToVaultRel(repoRoot: string, relPath: string): string | null {
-		const adapter = this.app.vault.adapter;
-		if (!(adapter instanceof FileSystemAdapter)) return null;
-		const abs = path.join(repoRoot, relPath);
-		const rel = path.relative(adapter.getBasePath(), abs);
-		if (rel.startsWith("..") || path.isAbsolute(rel)) return null;
-		return rel.split(path.sep).join("/");
 	}
 
 	private async getFileWithRetry(vaultRel: string, tries = 6): Promise<TFile | null> {
@@ -391,6 +450,10 @@ export default class MdPrReviewPlugin extends Plugin {
 	/* --------------------------------------------------------------------- */
 
 	private activeMarkdownView(): MarkdownView | null {
+		// Prefer the most recent main-area leaf so that clicking into our own
+		// side panels (which become the "active" view) doesn't lose the editor.
+		const recent = this.app.workspace.getMostRecentLeaf();
+		if (recent?.view instanceof MarkdownView) return recent.view;
 		return this.app.workspace.getActiveViewOfType(MarkdownView);
 	}
 
@@ -539,9 +602,15 @@ export default class MdPrReviewPlugin extends Plugin {
 
 	async addCommentFromSelection(): Promise<void> {
 		const view = this.activeMarkdownView();
-		const cm = view ? this.cmOf(view) : null;
-		if (!view || !cm || !view.file) {
-			new Notice("Open a markdown file in editing view first.");
+		if (!view || !view.file) {
+			new Notice("Open a markdown file first.");
+			return;
+		}
+		const cm = this.cmOf(view);
+		if (!cm) {
+			new Notice(
+				"Switch to Live Preview or Source view to add comments (Reading view has no text selection)."
+			);
 			return;
 		}
 		if (!this.activeDoc) await this.onActiveFileChanged();
@@ -639,13 +708,16 @@ export default class MdPrReviewPlugin extends Plugin {
 
 	private async loadPersisted(): Promise<void> {
 		const raw = ((await this.loadData()) as Record<string, unknown> | null) ?? {};
-		const { _session, _reviewed, ...rest } = raw as {
+		const { _session, _reviewed, _repo, ...rest } = raw as {
 			_session?: QueueSession;
 			_reviewed?: string[];
+			_repo?: RepoRef;
 		} & Record<string, unknown>;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, rest);
 		this.session = _session ?? null;
 		this.reviewed = new Set(Array.isArray(_reviewed) ? _reviewed : []);
+		this.selectedRepo = _repo ?? null;
+		this.currentRepoRoot = _repo?.repoRoot ?? null;
 	}
 
 	private async persist(): Promise<void> {
@@ -653,6 +725,7 @@ export default class MdPrReviewPlugin extends Plugin {
 			...this.settings,
 			_session: this.session,
 			_reviewed: Array.from(this.reviewed),
+			_repo: this.selectedRepo,
 		});
 	}
 

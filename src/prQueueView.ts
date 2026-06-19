@@ -1,11 +1,13 @@
 import { ItemView, WorkspaceLeaf, Notice, setIcon } from "obsidian";
 import type MdPrReviewPlugin from "./main";
+import type { RepoRef } from "./main";
 import { PullRequest, listPullRequests, markdownFiles } from "./github";
 
 export const PR_QUEUE_VIEW_TYPE = "mdpr-pr-queue";
 
 export class PrQueueView extends ItemView {
 	private plugin: MdPrReviewPlugin;
+	private repos: RepoRef[] = [];
 	private prs: PullRequest[] = [];
 	private authorFilter: string;
 	private searchFilter = "";
@@ -35,19 +37,23 @@ export class PrQueueView extends ItemView {
 
 	async onClose(): Promise<void> {}
 
-	/** Re-query GitHub for the PR list. */
 	async refresh(): Promise<void> {
 		this.loading = true;
 		this.errorMsg = "";
 		this.render();
 		try {
-			const repoRoot = await this.plugin.resolveRepoRoot();
-			if (!repoRoot) {
-				this.errorMsg = "No git repository found for this vault.";
+			this.repos = await this.plugin.discoverRepos();
+			if (this.repos.length === 0) {
+				this.errorMsg = "No git repositories found in this vault.";
 				this.prs = [];
 				return;
 			}
-			this.prs = await listPullRequests(this.plugin.settings.ghPath, repoRoot, {
+			let repo = this.plugin.selectedRepo;
+			if (!repo || !this.repos.some((r) => r.repoRoot === repo!.repoRoot)) {
+				repo = this.repos[0];
+				await this.plugin.setSelectedRepo(repo);
+			}
+			this.prs = await listPullRequests(this.plugin.settings.ghPath, repo.repoRoot, {
 				author: this.authorFilter,
 				search: this.searchFilter,
 			});
@@ -95,6 +101,10 @@ export class PrQueueView extends ItemView {
 		}
 		if (this.errorMsg) {
 			c.createDiv({ cls: "mdpr-queue-status mdpr-error", text: this.errorMsg });
+			c.createDiv({
+				cls: "mdpr-queue-status",
+				text: "The queue needs a repo with a GitHub remote that `gh` is authed for. A local-only repo (no remote) has no PRs to list.",
+			});
 			return;
 		}
 
@@ -110,9 +120,33 @@ export class PrQueueView extends ItemView {
 		const header = c.createDiv({ cls: "mdpr-queue-header" });
 		const top = header.createDiv({ cls: "mdpr-queue-title-row" });
 		top.createSpan({ text: "PR review queue", cls: "mdpr-queue-title" });
-		const refreshBtn = top.createEl("button", { cls: "mdpr-icon-btn", attr: { "aria-label": "Refresh" } });
+		const refreshBtn = top.createEl("button", {
+			cls: "mdpr-icon-btn",
+			attr: { "aria-label": "Refresh" },
+		});
 		setIcon(refreshBtn, "refresh-cw");
 		refreshBtn.onclick = () => void this.refresh();
+
+		// Repo selector (handles vaults that symlink multiple repos).
+		const repoRow = header.createDiv({ cls: "mdpr-repo-row" });
+		repoRow.createSpan({ cls: "mdpr-repo-label", text: "Repo" });
+		const select = repoRow.createEl("select", { cls: "mdpr-select" });
+		if (this.repos.length === 0) {
+			select.createEl("option", { text: "(none found)", value: "" });
+			select.disabled = true;
+		} else {
+			for (const r of this.repos) {
+				const opt = select.createEl("option", { text: r.name, value: r.repoRoot });
+				if (this.plugin.selectedRepo?.repoRoot === r.repoRoot) opt.selected = true;
+			}
+			select.onchange = async () => {
+				const chosen = this.repos.find((r) => r.repoRoot === select.value);
+				if (chosen) {
+					await this.plugin.setSelectedRepo(chosen);
+					await this.refresh();
+				}
+			};
+		}
 
 		const authorInput = header.createEl("input", {
 			cls: "mdpr-input",
@@ -151,24 +185,36 @@ export class PrQueueView extends ItemView {
 		const bar = c.createDiv({ cls: "mdpr-session" });
 
 		const prRow = bar.createDiv({ cls: "mdpr-session-row" });
-		const prevPr = prRow.createEl("button", { cls: "mdpr-icon-btn", attr: { "aria-label": "Previous PR" } });
+		const prevPr = prRow.createEl("button", {
+			cls: "mdpr-icon-btn",
+			attr: { "aria-label": "Previous PR" },
+		});
 		setIcon(prevPr, "chevron-left");
 		prevPr.onclick = () => void this.openAdjacentPr(-1);
 		prRow.createSpan({ cls: "mdpr-session-label", text: `PR #${session.prNumber}` });
-		const nextPr = prRow.createEl("button", { cls: "mdpr-icon-btn", attr: { "aria-label": "Next PR" } });
+		const nextPr = prRow.createEl("button", {
+			cls: "mdpr-icon-btn",
+			attr: { "aria-label": "Next PR" },
+		});
 		setIcon(nextPr, "chevron-right");
 		nextPr.onclick = () => void this.openAdjacentPr(1);
 
 		if (session.mdFiles.length > 0) {
 			const fileRow = bar.createDiv({ cls: "mdpr-session-row" });
-			const prevFile = fileRow.createEl("button", { cls: "mdpr-icon-btn", attr: { "aria-label": "Previous file" } });
+			const prevFile = fileRow.createEl("button", {
+				cls: "mdpr-icon-btn",
+				attr: { "aria-label": "Previous file" },
+			});
 			setIcon(prevFile, "arrow-left");
 			prevFile.onclick = () => void this.plugin.openAdjacentFile(-1);
 			fileRow.createSpan({
 				cls: "mdpr-session-label",
 				text: `File ${session.fileIndex + 1}/${session.mdFiles.length}`,
 			});
-			const nextFile = fileRow.createEl("button", { cls: "mdpr-icon-btn", attr: { "aria-label": "Next file" } });
+			const nextFile = fileRow.createEl("button", {
+				cls: "mdpr-icon-btn",
+				attr: { "aria-label": "Next file" },
+			});
 			setIcon(nextFile, "arrow-right");
 			nextFile.onclick = () => void this.plugin.openAdjacentFile(1);
 		}
@@ -191,7 +237,10 @@ export class PrQueueView extends ItemView {
 			const mdCount = markdownFiles(pr).length;
 			meta.createSpan({ cls: "mdpr-pr-badge", text: `${mdCount} md` });
 			if (this.plugin.isReviewed(pr.number)) {
-				const check = meta.createSpan({ cls: "mdpr-pr-check", attr: { "aria-label": "Reviewed" } });
+				const check = meta.createSpan({
+					cls: "mdpr-pr-check",
+					attr: { "aria-label": "Reviewed" },
+				});
 				setIcon(check, "check");
 			}
 

@@ -79,6 +79,21 @@
 	font-size: var(--font-ui-small);
 }
 
+.mdpr-repo-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+.mdpr-repo-label {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	flex-shrink: 0;
+}
+.mdpr-select {
+	flex: 1;
+	font-size: var(--font-ui-small);
+}
+
 .mdpr-toggle-row {
 	display: flex;
 	align-items: center;
