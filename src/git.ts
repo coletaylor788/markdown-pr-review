@@ -35,6 +35,12 @@ export async function locate(gitPath: string, absFilePath: string): Promise<File
 	return { repoRoot, relPath, dir };
 }
 
+/** Repo toplevel for an arbitrary working directory, or null if not a repo. */
+export async function repoRootOf(gitPath: string, cwd: string): Promise<string | null> {
+	const res = await run(gitPath, ["rev-parse", "--show-toplevel"], { cwd });
+	return res.code === 0 ? res.stdout.trim() : null;
+}
+
 export async function currentBranch(gitPath: string, repoRoot: string): Promise<string> {
 	const res = await run(gitPath, ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repoRoot });
 	return res.code === 0 ? res.stdout.trim() : "";
