@@ -1,0 +1,10 @@
+{
+	"id": "markdown-pr-review",
+	"name": "Markdown PR Review",
+	"version": "0.1.0",
+	"minAppVersion": "1.5.0",
+	"description": "Review GitHub markdown pull requests inside Obsidian: pick PRs from a filterable queue, highlight diff lines against the PR base, and attach comments in a gitignored sidecar for a Claude Code skill to post.",
+	"author": "Cole Taylor",
+	"authorUrl": "https://github.com/coletaylor788",
+	"isDesktopOnly": true
+}
