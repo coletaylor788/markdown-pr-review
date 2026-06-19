@@ -67,9 +67,19 @@ export class CommentPanelView extends ItemView {
 			row.createDiv({ cls: "mdpr-comment-quote", text: quote });
 			row.createDiv({ cls: "mdpr-comment-body", text: item.comment.body });
 
-			const actions = row.createDiv({ cls: "mdpr-comment-actions" });
-			if (!item.range) actions.createSpan({ cls: "mdpr-stale-tag", text: "stale" });
+			const placement = item.comment.placement;
+			if (!item.range || placement) {
+				const tags = row.createDiv({ cls: "mdpr-comment-tags" });
+				if (!item.range) tags.createSpan({ cls: "mdpr-stale-tag", text: "stale" });
+				if (placement) {
+					tags.createSpan({
+						cls: `mdpr-place-tag mdpr-place-${placement}`,
+						text: placement === "inline" ? "inline" : "fallback",
+					});
+				}
+			}
 
+			const actions = row.createDiv({ cls: "mdpr-comment-actions" });
 			const id = item.comment.id;
 			this.iconButton(actions, "crosshair", "Jump to anchor", () =>
 				this.plugin.jumpToComment(id)

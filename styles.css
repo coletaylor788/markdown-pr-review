@@ -254,12 +254,31 @@
 	align-items: center;
 	gap: 4px;
 }
+.mdpr-comment-tags {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+}
 .mdpr-stale-tag {
 	font-size: var(--font-ui-smaller);
 	color: var(--text-error);
-	margin-right: auto;
 	text-transform: uppercase;
 	letter-spacing: 0.04em;
+}
+.mdpr-place-tag {
+	font-size: var(--font-ui-smaller);
+	padding: 0 5px;
+	border-radius: 4px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+.mdpr-place-inline {
+	background: rgba(46, 160, 67, 0.18);
+	color: var(--color-green, #2ea043);
+}
+.mdpr-place-fallback {
+	background: rgba(210, 153, 34, 0.18);
+	color: var(--color-yellow, #d29922);
 }
 
 /* ------------------------------------------------------------------ */

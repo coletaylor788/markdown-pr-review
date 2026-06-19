@@ -46,8 +46,42 @@ then enable the plugin in Obsidian and reload.
 ## Sidecar format
 
 Comments are stored one JSON file per reviewed document under the sidecar directory
-(default `.pr-review/`, which should be gitignored). See [P4](#status) for the finalized schema;
-it is documented here once stable.
+(default `.pr-review/`, gitignored automatically). The path mirrors the document's
+repo-relative path: `docs/design.md` → `.pr-review/docs/design.md.review.json`.
+
+This file is the **contract** consumed by the `/post-review` Claude Code skill.
+
+```jsonc
+{
+  "version": 1,
+  "doc": "docs/design.md",        // repo-relative path of the reviewed file
+  "pr": 123,                       // PR number (present when started from the queue)
+  "base": "origin/main",           // base ref the doc is reviewed against
+  "comments": [
+    {
+      "id": "c_ab12cd9z",
+      "anchor": {                  // pollution-free TextQuoteSelector
+        "quote": "the latency target of 200ms",
+        "prefix": "…up to 32 chars before…",
+        "suffix": "…up to 32 chars after…",
+        "posHint": 1423            // char offset hint for fuzzy relocation
+      },
+      "body": "This contradicts the SLA section above.",
+      "status": "open",            // "open" | "resolved"
+      "placement": "inline",       // "inline" (anchor is on a changed line) | "fallback"
+      "line": 42,                  // 1-based line of the anchor, or null if stale
+      "createdAt": "2026-06-19T20:00:00.000Z"
+    }
+  ]
+}
+```
+
+**How `/post-review` should use it:** for each `open` comment, post a batched PR
+review via `gh api .../pulls/{pr}/reviews`. Comments with `placement: "inline"` and a
+non-null `line` become inline review comments on `doc` at `line`; `placement:
+"fallback"` (or `line: null`) comments become a top-level PR comment that quotes the
+anchored text and links a `blob/<sha>#L<line>` permalink. `placement`/`line` are
+recomputed against the PR base on every save, so they reflect the latest diff.
 
 ## Credits
 

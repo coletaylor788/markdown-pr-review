@@ -14,6 +14,21 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 function genId(): string {
 	return "c_" + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
 }
+
+/** Set of 1-based line numbers touched by the diff (added/modified/deleted). */
+function changedLineSet(doc: Text, result: DiffResult): Set<number> {
+	const set = new Set<number>();
+	const clampN = (n: number): number => (n < 0 ? 0 : n > doc.length ? doc.length : n);
+	for (const span of result.spans) {
+		const from = clampN(span.fromB);
+		const to = clampN(span.toB);
+		const start = doc.lineAt(from).number;
+		const end = doc.lineAt(to > from ? to - 1 : from).number;
+		for (let n = start; n <= end; n++) set.add(n);
+	}
+	for (const offset of result.deletions) set.add(doc.lineAt(clampN(offset)).number);
+	return set;
+}
 import { MdPrReviewSettings, DEFAULT_SETTINGS } from "./settings";
 import { MdPrReviewSettingTab } from "./settingsTab";
 import {
@@ -24,6 +39,8 @@ import {
 	retriggerDiff,
 	setLineBackground,
 } from "./diffExtension";
+import { computeDiff, DiffResult } from "./diff";
+import type { Text } from "@codemirror/state";
 import { locate, resolveBase, repoRootOf, isTreeDirty, GitError } from "./git";
 import { PullRequest, markdownFiles, checkoutPullRequest } from "./github";
 import { PR_QUEUE_VIEW_TYPE, PrQueueView } from "./prQueueView";
@@ -456,12 +473,68 @@ export default class MdPrReviewPlugin extends Plugin {
 
 	private async saveActiveSidecar(): Promise<void> {
 		if (!this.activeDoc) return;
+		if (this.activeDoc.sidecar.comments.length > 0) {
+			await this.classifyActiveComments();
+		}
 		await saveSidecar(
 			this.activeDoc.repoRoot,
 			this.settings.sidecarDir,
 			this.activeDoc.relPath,
 			this.activeDoc.sidecar
 		);
+	}
+
+	/**
+	 * Diff the active doc against its base and tag each comment as `inline`
+	 * (anchor lands on a changed line -> can be a GitHub inline review comment)
+	 * or `fallback` (unchanged line -> needs a PR-level comment), and resolve a
+	 * 1-based line number. This makes the sidecar a complete contract for the
+	 * /post-review skill.
+	 */
+	private async classifyActiveComments(): Promise<void> {
+		const doc = this.activeDoc;
+		if (!doc) return;
+		const view = this.activeMarkdownView();
+		const cm = view ? this.cmOf(view) : null;
+		if (!cm) return;
+
+		const baseRef = doc.sidecar.base ?? this.settings.baseRefFallback;
+		let baseText: string;
+		try {
+			const base = await resolveBase(
+				this.settings.gitPath,
+				{ repoRoot: doc.repoRoot, relPath: doc.relPath, dir: doc.repoRoot },
+				baseRef
+			);
+			baseText = base.baseText;
+		} catch (e) {
+			console.error("[markdown-pr-review] classify: base resolve failed", e);
+			return;
+		}
+
+		const text = cm.state.doc;
+		const docText = text.toString();
+		const changed = changedLineSet(text, computeDiff(baseText, docText));
+
+		for (const comment of doc.sidecar.comments) {
+			const range = resolveAnchor(docText, comment.anchor);
+			if (!range) {
+				comment.line = null;
+				comment.placement = undefined;
+				continue;
+			}
+			const startLine = text.lineAt(range.from).number;
+			const endLine = text.lineAt(Math.max(range.from, range.to - 1)).number;
+			comment.line = startLine;
+			let inline = false;
+			for (let n = startLine; n <= endLine; n++) {
+				if (changed.has(n)) {
+					inline = true;
+					break;
+				}
+			}
+			comment.placement = inline ? "inline" : "fallback";
+		}
 	}
 
 	async addCommentFromSelection(): Promise<void> {
