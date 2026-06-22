@@ -44,6 +44,32 @@
 	background-color: rgba(210, 153, 34, 0.1);
 }
 
+/* Indicator on a rendered Live Preview block (table, diagram, math, callout,
+   code) that contains changed lines — the per-line gutter can't reach inside
+   these, so mark the block and prompt the reader to click in. */
+.mdpr-changed-block {
+	position: relative;
+	box-shadow: inset 3px 0 0 var(--color-yellow, #d29922);
+	border-radius: 3px;
+}
+.mdpr-changed-block::after {
+	content: "diff";
+	position: absolute;
+	top: 2px;
+	right: 4px;
+	z-index: 5;
+	font-size: 9px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	padding: 0 5px;
+	border-radius: 3px;
+	background: var(--color-yellow, #d29922);
+	color: var(--background-primary);
+	opacity: 0.85;
+	pointer-events: none;
+}
+
 /* ------------------------------------------------------------------ */
 /* PR queue view                                                       */
 /* ------------------------------------------------------------------ */
