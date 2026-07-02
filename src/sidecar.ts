@@ -12,9 +12,13 @@ export interface Comment {
 	status: CommentStatus;
 	/** Set by P4 from the diff: does the anchor land on a changed line? */
 	placement?: Placement;
-	/** 1-based line resolved at write time (for the post-review skill). */
+	/** 1-based line resolved at write time. */
 	line?: number | null;
 	createdAt: string;
+	/** Set once posted to GitHub, so it isn't posted twice. */
+	postedAt?: string;
+	/** URL of the GitHub review this comment was posted in. */
+	reviewUrl?: string;
 }
 
 export interface Sidecar {

@@ -33,12 +33,21 @@ export class CommentPanelView extends ItemView {
 
 		const header = c.createDiv({ cls: "mdpr-comments-header" });
 		header.createSpan({ cls: "mdpr-queue-title", text: "PR comments" });
-		const addBtn = header.createEl("button", {
+		const actions = header.createDiv({ cls: "mdpr-header-actions" });
+		const addBtn = actions.createEl("button", {
 			cls: "mdpr-icon-btn",
 			attr: { "aria-label": "Add comment from selection" },
 		});
 		setIcon(addBtn, "message-square-plus");
 		addBtn.onclick = () => void this.plugin.addCommentFromSelection();
+		if (this.plugin.session) {
+			const postBtn = actions.createEl("button", {
+				cls: "mdpr-icon-btn",
+				attr: { "aria-label": `Post review to PR #${this.plugin.session.prNumber}` },
+			});
+			setIcon(postBtn, "send");
+			postBtn.onclick = () => void this.plugin.postReviewToGitHub();
+		}
 
 		if (!this.plugin.activeDoc) {
 			c.createDiv({
@@ -71,7 +80,9 @@ export class CommentPanelView extends ItemView {
 			row.createDiv({ cls: "mdpr-comment-body", text: item.comment.body });
 
 			const placement = item.comment.placement;
-			if (!item.range || placement) {
+			const posted = !!item.comment.postedAt;
+			if (posted) row.addClass("mdpr-posted");
+			if (!item.range || placement || posted) {
 				const tags = row.createDiv({ cls: "mdpr-comment-tags" });
 				if (!item.range) tags.createSpan({ cls: "mdpr-stale-tag", text: "stale" });
 				if (placement) {
@@ -80,6 +91,7 @@ export class CommentPanelView extends ItemView {
 						text: placement === "inline" ? "inline" : "fallback",
 					});
 				}
+				if (posted) tags.createSpan({ cls: "mdpr-posted-tag", text: "posted" });
 			}
 
 			const actions = row.createDiv({ cls: "mdpr-comment-actions" });

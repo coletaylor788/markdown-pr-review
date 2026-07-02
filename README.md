@@ -2,13 +2,14 @@
 
 An Obsidian plugin for reviewing GitHub markdown pull requests **inside the vault** — where Claude Code already lives.
 
-It does three things:
+It does four things:
 
 1. **PR picker / review queue.** A side panel lists open PRs (filterable by author, search, and "markdown-only"). Pick one and the plugin checks out its branch and opens the changed `.md` files so you can walk PRs one by one. No external tooling needed to switch PRs.
-2. **Diff highlighting.** Toggle on a per-file gutter (and optional line background) that highlights the lines changed in the PR, diffed against the PR's **base branch** (derived per-PR from `gh`, not a hardcoded `main`).
+2. **Diff highlighting.** Toggle on a per-file gutter (and optional line background) that highlights the lines changed in the PR, diffed against the PR's **base branch** (derived per-PR from `gh`, not a hardcoded `main`). Rendered blocks (tables, diagrams, math, callouts, code) that changed get a "diff" badge in Live Preview.
 3. **Non-invasive comments.** Select text and attach a comment. Comments live in a gitignored JSON **sidecar** (`.pr-review/`), so the source `.md` is never modified and review notes survive branch switches.
+4. **Post the review.** "Post review to GitHub" posts every open comment across the PR as one batched review via `gh` — inline comments on changed lines, the rest summarized in the review body with permalinks. Posted comments are stamped so they're never posted twice.
 
-Posting comments to GitHub is intentionally **out of scope** for the plugin — a separate [Claude Code](https://claude.com/claude-code) skill reads the sidecar and posts a batched review via `gh`. The sidecar schema is the contract between them (see [Sidecar format](#sidecar-format)).
+The sidecar format is documented below so the data stays portable, but you don't need any external tooling to post — it's built in.
 
 > **Desktop only.** The plugin shells out to `git` and the [GitHub CLI](https://cli.github.com/) (`gh`), so it requires a desktop Obsidian install with both on `PATH` and `gh auth` configured for your host (works with GitHub Enterprise hosts too).
 
@@ -49,7 +50,9 @@ Comments are stored one JSON file per reviewed document under the sidecar direct
 (default `.pr-review/`, gitignored automatically). The path mirrors the document's
 repo-relative path: `docs/design.md` → `.pr-review/docs/design.md.review.json`.
 
-This file is the **contract** consumed by the `/post-review` Claude Code skill.
+This file is written next to each reviewed document; the plugin reads it back
+when posting. It's documented so the data stays portable (you could post it with
+your own tooling), but the built-in **Post review to GitHub** does it for you.
 
 ```jsonc
 {
@@ -76,12 +79,12 @@ This file is the **contract** consumed by the `/post-review` Claude Code skill.
 }
 ```
 
-**How `/post-review` should use it:** for each `open` comment, post a batched PR
-review via `gh api .../pulls/{pr}/reviews`. Comments with `placement: "inline"` and a
-non-null `line` become inline review comments on `doc` at `line`; `placement:
-"fallback"` (or `line: null`) comments become a top-level PR comment that quotes the
-anchored text and links a `blob/<sha>#L<line>` permalink. `placement`/`line` are
-recomputed against the PR base on every save, so they reflect the latest diff.
+**How posting works:** every `open`, un-posted comment across the PR's markdown
+files is re-resolved against the working tree, then sent as one review via
+`gh api .../pulls/{pr}/reviews`. `placement: "inline"` comments (anchor on a
+changed line) become inline review comments at `line`; `fallback`/stale comments
+go into the review body with a `blob/<sha>#L<line>` permalink. Each comment is
+stamped `postedAt` so re-posting only sends new comments.
 
 ## Credits
 

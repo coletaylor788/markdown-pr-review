@@ -91,3 +91,29 @@ export async function checkoutPullRequest(
 		throw new GhError(res.stderr.trim() || `gh pr checkout ${prNumber} failed`);
 	}
 }
+
+/** The PR head commit SHA (what review comments must anchor to). */
+export async function prHeadSha(
+	ghPath: string,
+	repoRoot: string,
+	prNumber: number
+): Promise<string | null> {
+	const res = await run(
+		ghPath,
+		["pr", "view", String(prNumber), "--json", "headRefOid", "--jq", ".headRefOid"],
+		{ cwd: repoRoot, timeoutMs: 20000 }
+	);
+	return res.code === 0 ? res.stdout.trim() || null : null;
+}
+
+/** The repo's web URL (for building permalinks in the review body). */
+export async function repoWebUrl(
+	ghPath: string,
+	repoRoot: string
+): Promise<string | null> {
+	const res = await run(ghPath, ["repo", "view", "--json", "url", "--jq", ".url"], {
+		cwd: repoRoot,
+		timeoutMs: 20000,
+	});
+	return res.code === 0 ? res.stdout.trim() || null : null;
+}

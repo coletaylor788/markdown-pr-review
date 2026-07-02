@@ -43,7 +43,19 @@ import {
 import { computeDiff, DiffResult } from "./diff";
 import type { Text } from "@codemirror/state";
 import { locate, resolveBase, repoRootOf, isTreeDirty, GitError } from "./git";
-import { PullRequest, markdownFiles, checkoutPullRequest } from "./github";
+import {
+	PullRequest,
+	markdownFiles,
+	checkoutPullRequest,
+	prHeadSha,
+	repoWebUrl,
+} from "./github";
+import {
+	resolveDocComments,
+	buildReviewPayload,
+	postReview,
+	FileComments,
+} from "./review";
 import { PR_QUEUE_VIEW_TYPE, PrQueueView } from "./prQueueView";
 import { COMMENT_PANEL_VIEW_TYPE, CommentPanelView } from "./commentPanel";
 import { commentExtension, setComments, setCommentClickHandler } from "./commentExtension";
@@ -147,6 +159,16 @@ export default class MdPrReviewPlugin extends Plugin {
 				const view = this.app.workspace.getActiveViewOfType(MarkdownView);
 				if (!view || view.file == null) return false;
 				if (!checking) void this.addCommentFromSelection();
+				return true;
+			},
+		});
+
+		this.addCommand({
+			id: "post-review",
+			name: "Post review to GitHub",
+			checkCallback: (checking) => {
+				if (!this.session) return false;
+				if (!checking) void this.postReviewToGitHub();
 				return true;
 			},
 		});
@@ -720,6 +742,91 @@ export default class MdPrReviewPlugin extends Plugin {
 		if (this.activeDoc.sidecar.comments.length === before) return;
 		await this.saveActiveSidecar();
 		this.refreshComments();
+	}
+
+	/**
+	 * Post all open, un-posted comments across the current PR as a single batched
+	 * GitHub review — inline comments on changed lines, everything else in the
+	 * review body. Deterministic; re-resolves each anchor against the working tree.
+	 */
+	async postReviewToGitHub(): Promise<void> {
+		const s = this.session;
+		if (!s) {
+			new Notice("Open the PR from the queue first, then post the review.");
+			return;
+		}
+
+		const relPaths = Array.from(new Set(s.mdFiles));
+		const files: Array<FileComments & { sidecar: Sidecar }> = [];
+		for (const rel of relPaths) {
+			const sidecar = await loadSidecar(s.repoRoot, this.settings.sidecarDir, rel);
+			if (sidecar.comments.length === 0) continue;
+			const resolved = await resolveDocComments(
+				this.settings.gitPath,
+				s.repoRoot,
+				rel,
+				s.baseRef,
+				sidecar.comments
+			);
+			files.push({ relPath: rel, resolved, sidecar });
+		}
+
+		const pending = files
+			.flatMap((f) => f.resolved)
+			.filter((rc) => rc.comment.status === "open" && !rc.comment.postedAt);
+		if (pending.length === 0) {
+			new Notice("No open, un-posted comments to post.");
+			return;
+		}
+
+		const headSha = await prHeadSha(this.settings.ghPath, s.repoRoot, s.prNumber);
+		if (!headSha) {
+			new Notice("Couldn't resolve the PR head commit.");
+			return;
+		}
+		const repoUrl = await repoWebUrl(this.settings.ghPath, s.repoRoot);
+		const { payload, inlineCount, fallbackCount } = buildReviewPayload(
+			files,
+			headSha,
+			repoUrl
+		);
+		new Notice(
+			`Posting ${inlineCount} inline + ${fallbackCount} summary comment(s) to PR #${s.prNumber}…`
+		);
+
+		let result: { html_url?: string };
+		try {
+			result = await postReview(this.settings.ghPath, s.repoRoot, s.prNumber, payload);
+		} catch (e) {
+			new Notice(`Post failed: ${(e as Error).message}`);
+			console.error("[markdown-pr-review] postReview", e);
+			return;
+		}
+
+		const now = new Date().toISOString();
+		for (const f of files) {
+			let touched = false;
+			for (const rc of f.resolved) {
+				if (rc.comment.status === "open" && !rc.comment.postedAt) {
+					rc.comment.postedAt = now;
+					if (result.html_url) rc.comment.reviewUrl = result.html_url;
+					touched = true;
+				}
+			}
+			if (touched) {
+				await saveSidecar(s.repoRoot, this.settings.sidecarDir, f.relPath, f.sidecar);
+			}
+		}
+
+		if (this.activeDoc && relPaths.includes(this.activeDoc.relPath)) {
+			this.activeDoc.sidecar = await loadSidecar(
+				s.repoRoot,
+				this.settings.sidecarDir,
+				this.activeDoc.relPath
+			);
+			this.refreshComments();
+		}
+		new Notice(`Posted review to PR #${s.prNumber}.`);
 	}
 
 	/* --------------------------------------------------------------------- */
