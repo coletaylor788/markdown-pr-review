@@ -269,33 +269,57 @@ const changedBlockPlugin = ViewPlugin.fromClass(
 
 		apply(): void {
 			const content = this.view.contentDOM;
-			content.querySelectorAll(`.${BLOCK_CLASS}`).forEach((el) =>
-				el.classList.remove(BLOCK_CLASS)
-			);
+			content
+				.querySelectorAll(`.${BLOCK_CLASS}`)
+				.forEach((el) => el.classList.remove(BLOCK_CLASS));
 
 			const st = this.view.state.field(diffField, false);
 			if (!st || !st.enabled || st.changedLines.size === 0) return;
 
 			const doc = this.view.state.doc;
+			const marked = new Set<HTMLElement>();
 			for (const lineNo of st.changedLines) {
 				if (lineNo < 1 || lineNo > doc.lines) continue;
-				const pos = doc.line(lineNo).from;
-				let dom: { node: Node } | null = null;
-				try {
-					dom = this.view.domAtPos(pos);
-				} catch {
-					continue;
+				const el = this.markableBlockAt(doc.line(lineNo).from);
+				if (el && !marked.has(el)) {
+					el.classList.add(BLOCK_CLASS);
+					marked.add(el);
 				}
-				let el: HTMLElement | null =
-					dom.node.nodeType === Node.TEXT_NODE
-						? dom.node.parentElement
-						: (dom.node as HTMLElement);
-				// Climb to the direct child of the content element (the block).
-				while (el && el.parentElement !== content) el = el.parentElement;
-				// Only mark rendered widgets, not plain source lines (those already
-				// get gutter signs).
-				if (el && !el.classList.contains("cm-line")) el.classList.add(BLOCK_CLASS);
 			}
+		}
+
+		// Only rendered widget blocks — not plain source lines (they get gutter
+		// signs), the off-screen gap, or the measurement spacer.
+		private isMarkable(el: HTMLElement): boolean {
+			const cl = el.classList;
+			return el.className !== "" && !cl.contains("cm-line") && !cl.contains("cm-gap");
+		}
+
+		private markableBlockAt(pos: number): HTMLElement | null {
+			const content = this.view.contentDOM;
+			let node: Node;
+			let offset: number;
+			try {
+				({ node, offset } = this.view.domAtPos(pos));
+			} catch {
+				return null;
+			}
+			// A rendered block widget reports the position at the content edge:
+			// select the child element at that offset.
+			if (node === content) {
+				const candidates = [content.childNodes[offset], content.childNodes[offset - 1]];
+				for (const c of candidates) {
+					if (c instanceof HTMLElement && this.isMarkable(c)) return c;
+				}
+				return null;
+			}
+			// Otherwise climb to the direct child of the content element.
+			let el: HTMLElement | null =
+				node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement);
+			while (el && el.parentElement && el.parentElement !== content) {
+				el = el.parentElement;
+			}
+			return el && el.parentElement === content && this.isMarkable(el) ? el : null;
 		}
 
 		destroy(): void {
