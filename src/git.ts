@@ -54,6 +54,17 @@ export async function isTreeDirty(gitPath: string, repoRoot: string): Promise<bo
 	return res.code === 0 && res.stdout.trim().length > 0;
 }
 
+/** File content at a specific ref (e.g. the PR head SHA), or null if absent. */
+export async function fileAtRef(
+	gitPath: string,
+	repoRoot: string,
+	ref: string,
+	relPath: string
+): Promise<string | null> {
+	const res = await run(gitPath, ["show", `${ref}:${relPath}`], { cwd: repoRoot });
+	return res.code === 0 ? res.stdout : null;
+}
+
 async function mergeBase(
 	gitPath: string,
 	repoRoot: string,

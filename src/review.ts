@@ -2,12 +2,23 @@ import { promises as fsp } from "fs";
 import * as os from "os";
 import * as path from "path";
 import { run } from "./shell";
-import { resolveBase } from "./git";
+import { resolveBase, fileAtRef } from "./git";
 import { computeDiff } from "./diff";
 import { resolveAnchor } from "./anchor";
 import { Comment } from "./sidecar";
 
 export class ReviewError extends Error {}
+
+/** Whether a failed post looks like GitHub rejecting an inline comment off the diff. */
+export function isInlineRejection(err: unknown): boolean {
+	const m = (err instanceof Error ? err.message : String(err)).toLowerCase();
+	return (
+		m.includes("422") ||
+		m.includes("unprocessable") ||
+		m.includes("part of the diff") ||
+		m.includes("line must")
+	);
+}
 
 export interface ResolvedComment {
 	comment: Comment;
@@ -31,27 +42,31 @@ export interface ReviewPayload {
 }
 
 /**
- * Re-resolve a document's comments against the current working-tree content and
- * the PR base — deterministic and independent of any open editor. Each comment
- * gets a fresh line number and an inline/fallback classification.
+ * Re-resolve a document's comments deterministically. Content is read from the
+ * PR head commit (what GitHub's diff is computed against) so inline line numbers
+ * always match — no dependence on the working tree or open editor. Falls back to
+ * the working-tree file if the head content can't be read.
  */
 export async function resolveDocComments(
 	gitPath: string,
 	repoRoot: string,
 	relPath: string,
 	baseRef: string,
+	headRef: string,
 	comments: Comment[]
 ): Promise<ResolvedComment[]> {
-	let current: string;
-	try {
-		current = await fsp.readFile(path.join(repoRoot, relPath), "utf8");
-	} catch {
-		return comments.map((c) => ({
-			comment: c,
-			line: null,
-			inline: false,
-			quote: c.anchor.quote,
-		}));
+	let current: string | null = await fileAtRef(gitPath, repoRoot, headRef, relPath);
+	if (current == null) {
+		try {
+			current = await fsp.readFile(path.join(repoRoot, relPath), "utf8");
+		} catch {
+			return comments.map((c) => ({
+				comment: c,
+				line: null,
+				inline: false,
+				quote: c.anchor.quote,
+			}));
+		}
 	}
 
 	let baseText = "";
@@ -67,7 +82,7 @@ export async function resolveDocComments(
 	const changed = changedLineSet(baseText, current, starts);
 
 	return comments.map((c) => {
-		const r = resolveAnchor(current, c.anchor);
+		const r = resolveAnchor(current!, c.anchor);
 		if (!r) return { comment: c, line: null, inline: false, quote: c.anchor.quote };
 		const line = lineOf(starts, r.from);
 		return { comment: c, line, inline: changed.has(line), quote: c.anchor.quote };
@@ -78,7 +93,8 @@ export async function resolveDocComments(
 export function buildReviewPayload(
 	files: FileComments[],
 	headSha: string,
-	repoUrl: string | null
+	repoUrl: string | null,
+	opts: { allToBody?: boolean } = {}
 ): { payload: ReviewPayload; inlineCount: number; fallbackCount: number } {
 	const inline: ReviewPayload["comments"] = [];
 	const fallback: Array<{ file: string; line: number | null; body: string; quote: string }> =
@@ -87,7 +103,7 @@ export function buildReviewPayload(
 	for (const f of files) {
 		for (const rc of f.resolved) {
 			if (rc.comment.status !== "open" || rc.comment.postedAt) continue;
-			if (rc.inline && rc.line) {
+			if (!opts.allToBody && rc.inline && rc.line) {
 				inline.push({ path: f.relPath, line: rc.line, side: "RIGHT", body: rc.comment.body });
 			} else {
 				fallback.push({

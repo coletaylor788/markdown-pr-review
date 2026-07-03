@@ -54,6 +54,7 @@ import {
 	resolveDocComments,
 	buildReviewPayload,
 	postReview,
+	isInlineRejection,
 	FileComments,
 } from "./review";
 import { PR_QUEUE_VIEW_TYPE, PrQueueView } from "./prQueueView";
@@ -746,8 +747,10 @@ export default class MdPrReviewPlugin extends Plugin {
 
 	/**
 	 * Post all open, un-posted comments across the current PR as a single batched
-	 * GitHub review — inline comments on changed lines, everything else in the
-	 * review body. Deterministic; re-resolves each anchor against the working tree.
+	 * GitHub review. Anchors are re-resolved against the PR head commit (what the
+	 * diff is computed from), so inline lines always match — no working-tree
+	 * mutation. If GitHub rejects an inline comment, retries with everything in
+	 * the review body.
 	 */
 	async postReviewToGitHub(): Promise<void> {
 		const s = this.session;
@@ -755,6 +758,13 @@ export default class MdPrReviewPlugin extends Plugin {
 			new Notice("Open the PR from the queue first, then post the review.");
 			return;
 		}
+
+		const headSha = await prHeadSha(this.settings.ghPath, s.repoRoot, s.prNumber);
+		if (!headSha) {
+			new Notice("Couldn't resolve the PR head commit.");
+			return;
+		}
+		const repoUrl = await repoWebUrl(this.settings.ghPath, s.repoRoot);
 
 		const relPaths = Array.from(new Set(s.mdFiles));
 		const files: Array<FileComments & { sidecar: Sidecar }> = [];
@@ -766,6 +776,7 @@ export default class MdPrReviewPlugin extends Plugin {
 				s.repoRoot,
 				rel,
 				s.baseRef,
+				headSha,
 				sidecar.comments
 			);
 			files.push({ relPath: rel, resolved, sidecar });
@@ -779,28 +790,36 @@ export default class MdPrReviewPlugin extends Plugin {
 			return;
 		}
 
-		const headSha = await prHeadSha(this.settings.ghPath, s.repoRoot, s.prNumber);
-		if (!headSha) {
-			new Notice("Couldn't resolve the PR head commit.");
-			return;
-		}
-		const repoUrl = await repoWebUrl(this.settings.ghPath, s.repoRoot);
-		const { payload, inlineCount, fallbackCount } = buildReviewPayload(
-			files,
-			headSha,
-			repoUrl
-		);
+		const built = buildReviewPayload(files, headSha, repoUrl);
 		new Notice(
-			`Posting ${inlineCount} inline + ${fallbackCount} summary comment(s) to PR #${s.prNumber}…`
+			`Posting ${built.inlineCount} inline + ${built.fallbackCount} summary comment(s) to PR #${s.prNumber}…`
 		);
 
 		let result: { html_url?: string };
 		try {
-			result = await postReview(this.settings.ghPath, s.repoRoot, s.prNumber, payload);
+			result = await postReview(this.settings.ghPath, s.repoRoot, s.prNumber, built.payload);
 		} catch (e) {
-			new Notice(`Post failed: ${(e as Error).message}`);
-			console.error("[markdown-pr-review] postReview", e);
-			return;
+			if (built.inlineCount > 0 && isInlineRejection(e)) {
+				// GitHub rejected an inline comment — retry with everything in the body.
+				const bodyOnly = buildReviewPayload(files, headSha, repoUrl, { allToBody: true });
+				try {
+					result = await postReview(
+						this.settings.ghPath,
+						s.repoRoot,
+						s.prNumber,
+						bodyOnly.payload
+					);
+					new Notice("Some comments couldn't anchor inline — posted them in the review summary.");
+				} catch (e2) {
+					new Notice(`Post failed: ${(e2 as Error).message}`);
+					console.error("[markdown-pr-review] postReview retry", e2);
+					return;
+				}
+			} else {
+				new Notice(`Post failed: ${(e as Error).message}`);
+				console.error("[markdown-pr-review] postReview", e);
+				return;
+			}
 		}
 
 		const now = new Date().toISOString();
