@@ -1,4 +1,5 @@
 import * as path from "path";
+import { promises as fsp } from "fs";
 import { run } from "./shell";
 
 export interface FileLocation {
@@ -30,9 +31,21 @@ export async function locate(gitPath: string, absFilePath: string): Promise<File
 			res.stderr.trim() || `${absFilePath} is not inside a git repository.`
 		);
 	}
-	const repoRoot = res.stdout.trim();
-	const relPath = path.relative(repoRoot, absFilePath).split(path.sep).join("/");
+	const repoRoot = await realpath(res.stdout.trim());
+	// The file may reach the repo through a vault symlink, so resolve its real
+	// path before computing a repo-relative path (otherwise path.relative against
+	// the real repo root yields a bogus "../../" path).
+	const realAbs = await realpath(absFilePath);
+	const relPath = path.relative(repoRoot, realAbs).split(path.sep).join("/");
 	return { repoRoot, relPath, dir };
+}
+
+async function realpath(p: string): Promise<string> {
+	try {
+		return await fsp.realpath(p);
+	} catch {
+		return p;
+	}
 }
 
 /** Repo toplevel for an arbitrary working directory, or null if not a repo. */
