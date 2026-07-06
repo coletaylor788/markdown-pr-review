@@ -48,7 +48,7 @@ import {
 	markdownFiles,
 	checkoutPullRequest,
 	prHeadSha,
-	repoWebUrl,
+	repoTarget,
 } from "./github";
 import {
 	resolveDocComments,
@@ -764,7 +764,11 @@ export default class MdPrReviewPlugin extends Plugin {
 			new Notice("Couldn't resolve the PR head commit.");
 			return;
 		}
-		const repoUrl = await repoWebUrl(this.settings.ghPath, s.repoRoot);
+		const target = await repoTarget(this.settings.ghPath, s.repoRoot);
+		if (!target) {
+			new Notice("Couldn't resolve the repository on GitHub.");
+			return;
+		}
 
 		const relPaths = Array.from(new Set(s.mdFiles));
 		const files: Array<FileComments & { sidecar: Sidecar }> = [];
@@ -790,22 +794,33 @@ export default class MdPrReviewPlugin extends Plugin {
 			return;
 		}
 
-		const built = buildReviewPayload(files, headSha, repoUrl);
+		const built = buildReviewPayload(files, headSha, target.url);
 		new Notice(
 			`Posting ${built.inlineCount} inline + ${built.fallbackCount} summary comment(s) to PR #${s.prNumber}…`
 		);
 
 		let result: { html_url?: string };
 		try {
-			result = await postReview(this.settings.ghPath, s.repoRoot, s.prNumber, built.payload);
+			result = await postReview(
+				this.settings.ghPath,
+				s.repoRoot,
+				target.host,
+				target.nameWithOwner,
+				s.prNumber,
+				built.payload
+			);
 		} catch (e) {
 			if (built.inlineCount > 0 && isInlineRejection(e)) {
 				// GitHub rejected an inline comment — retry with everything in the body.
-				const bodyOnly = buildReviewPayload(files, headSha, repoUrl, { allToBody: true });
+				const bodyOnly = buildReviewPayload(files, headSha, target.url, {
+					allToBody: true,
+				});
 				try {
 					result = await postReview(
 						this.settings.ghPath,
 						s.repoRoot,
+						target.host,
+						target.nameWithOwner,
 						s.prNumber,
 						bodyOnly.payload
 					);

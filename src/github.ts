@@ -106,14 +106,20 @@ export async function prHeadSha(
 	return res.code === 0 ? res.stdout.trim() || null : null;
 }
 
-/** The repo's web URL (for building permalinks in the review body). */
-export async function repoWebUrl(
+/** The repo's API target: host (for gh --hostname), owner/name, and web URL. */
+export async function repoTarget(
 	ghPath: string,
 	repoRoot: string
-): Promise<string | null> {
-	const res = await run(ghPath, ["repo", "view", "--json", "url", "--jq", ".url"], {
+): Promise<{ host: string; nameWithOwner: string; url: string } | null> {
+	const res = await run(ghPath, ["repo", "view", "--json", "nameWithOwner,url"], {
 		cwd: repoRoot,
 		timeoutMs: 20000,
 	});
-	return res.code === 0 ? res.stdout.trim() || null : null;
+	if (res.code !== 0) return null;
+	try {
+		const j = JSON.parse(res.stdout) as { nameWithOwner: string; url: string };
+		return { host: new URL(j.url).host, nameWithOwner: j.nameWithOwner, url: j.url };
+	} catch {
+		return null;
+	}
 }

@@ -137,10 +137,12 @@ export function buildReviewPayload(
 	};
 }
 
-/** POST the review via gh, using {owner}/{repo} templating from the repo cwd. */
+/** POST the review via gh, targeting the repo's host explicitly (GHE-aware). */
 export async function postReview(
 	ghPath: string,
 	repoRoot: string,
+	host: string,
+	nameWithOwner: string,
 	prNumber: number,
 	payload: ReviewPayload
 ): Promise<{ html_url?: string }> {
@@ -154,9 +156,11 @@ export async function postReview(
 			ghPath,
 			[
 				"api",
+				"--hostname",
+				host,
 				"--method",
 				"POST",
-				`repos/{owner}/{repo}/pulls/${prNumber}/reviews`,
+				`repos/${nameWithOwner}/pulls/${prNumber}/reviews`,
 				"--input",
 				tmp,
 			],
