@@ -362,3 +362,16 @@
 .mdpr-modal-textarea {
 	width: 100%;
 }
+
+.mdpr-modal-sub {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	margin: -6px 0 10px;
+}
+.mdpr-modal-buttons {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 12px;
+}

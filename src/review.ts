@@ -34,10 +34,12 @@ export interface FileComments {
 	resolved: ResolvedComment[];
 }
 
+export type ReviewEvent = "COMMENT" | "APPROVE" | "REQUEST_CHANGES";
+
 export interface ReviewPayload {
 	commit_id: string;
 	body: string;
-	event: "COMMENT";
+	event: ReviewEvent;
 	comments: Array<{ path: string; line: number; side: "RIGHT"; body: string }>;
 }
 
@@ -94,7 +96,7 @@ export function buildReviewPayload(
 	files: FileComments[],
 	headSha: string,
 	repoUrl: string | null,
-	opts: { allToBody?: boolean } = {}
+	opts: { allToBody?: boolean; event?: ReviewEvent; summary?: string } = {}
 ): { payload: ReviewPayload; inlineCount: number; fallbackCount: number } {
 	const inline: ReviewPayload["comments"] = [];
 	const fallback: Array<{ file: string; line: number | null; body: string; quote: string }> =
@@ -116,22 +118,31 @@ export function buildReviewPayload(
 		}
 	}
 
-	let body = "Review from Obsidian · Markdown PR Review";
+	const parts: string[] = [];
+	if (opts.summary) parts.push(opts.summary);
 	if (fallback.length) {
-		body += "\n\n**Comments on unchanged lines:**";
+		let section = "**Comments on unchanged lines:**";
 		for (const fb of fallback) {
 			const loc = fb.line ? `${fb.file}:${fb.line}` : `${fb.file} (unanchored)`;
 			const link =
 				repoUrl && fb.line
 					? ` ([view](${repoUrl}/blob/${headSha}/${fb.file}#L${fb.line}))`
 					: "";
-			body += `\n\n- \`${loc}\`${link} — ${fb.body}`;
-			if (fb.quote) body += `\n  > ${truncate(fb.quote, 140)}`;
+			section += `\n\n- \`${loc}\`${link} — ${fb.body}`;
+			if (fb.quote) section += `\n  > ${truncate(fb.quote, 140)}`;
 		}
+		parts.push(section);
 	}
+	let body = parts.join("\n\n");
+	if (!body) body = "Reviewed in Obsidian · Markdown PR Review";
 
 	return {
-		payload: { commit_id: headSha, body, event: "COMMENT", comments: inline },
+		payload: {
+			commit_id: headSha,
+			body,
+			event: opts.event ?? "COMMENT",
+			comments: inline,
+		},
 		inlineCount: inline.length,
 		fallbackCount: fallback.length,
 	};

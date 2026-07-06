@@ -56,7 +56,9 @@ import {
 	postReview,
 	isInlineRejection,
 	FileComments,
+	ReviewEvent,
 } from "./review";
+import { ReviewSubmitModal } from "./reviewSubmitModal";
 import { PR_QUEUE_VIEW_TYPE, PrQueueView } from "./prQueueView";
 import { COMMENT_PANEL_VIEW_TYPE, CommentPanelView } from "./commentPanel";
 import { commentExtension, setComments, setCommentClickHandler } from "./commentExtension";
@@ -794,7 +796,23 @@ export default class MdPrReviewPlugin extends Plugin {
 			return;
 		}
 
-		const built = buildReviewPayload(files, headSha, target.url);
+		const preview = buildReviewPayload(files, headSha, target.url);
+		const choice = await new Promise<{ event: ReviewEvent; summary: string } | null>(
+			(resolve) => {
+				new ReviewSubmitModal(this.app, {
+					prNumber: s.prNumber,
+					inlineCount: preview.inlineCount,
+					fallbackCount: preview.fallbackCount,
+					onSubmit: resolve,
+				}).open();
+			}
+		);
+		if (!choice) return;
+
+		const built = buildReviewPayload(files, headSha, target.url, {
+			event: choice.event,
+			summary: choice.summary,
+		});
 		new Notice(
 			`Posting ${built.inlineCount} inline + ${built.fallbackCount} summary comment(s) to PR #${s.prNumber}…`
 		);
@@ -814,6 +832,8 @@ export default class MdPrReviewPlugin extends Plugin {
 				// GitHub rejected an inline comment — retry with everything in the body.
 				const bodyOnly = buildReviewPayload(files, headSha, target.url, {
 					allToBody: true,
+					event: choice.event,
+					summary: choice.summary,
 				});
 				try {
 					result = await postReview(
