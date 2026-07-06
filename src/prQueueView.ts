@@ -2,6 +2,7 @@ import { ItemView, WorkspaceLeaf, Notice, setIcon } from "obsidian";
 import type MdPrReviewPlugin from "./main";
 import type { RepoRef } from "./main";
 import { PullRequest, listPullRequests, markdownFiles, currentUser } from "./github";
+import { buildFileTree, TreeNode } from "./fileTree";
 
 export const PR_QUEUE_VIEW_TYPE = "mdpr-pr-queue";
 
@@ -16,6 +17,7 @@ export class PrQueueView extends ItemView {
 	private myLogin: string | null = null;
 	private myLoginResolved = false;
 	private bodyEl: HTMLElement | null = null;
+	private treeCollapsed = new Set<string>();
 
 	constructor(leaf: WorkspaceLeaf, plugin: MdPrReviewPlugin) {
 		super(leaf);
@@ -112,6 +114,7 @@ export class PrQueueView extends ItemView {
 		c.addClass("mdpr-queue");
 		this.renderFilters(c);
 		this.renderSessionBar(c);
+		this.renderFileTree(c);
 		this.bodyEl = c.createDiv({ cls: "mdpr-queue-body" });
 		this.renderBody();
 	}
@@ -217,32 +220,63 @@ export class PrQueueView extends ItemView {
 		});
 		setIcon(prevPr, "chevron-left");
 		prevPr.onclick = () => void this.openAdjacentPr(-1);
-		prRow.createSpan({ cls: "mdpr-session-label", text: `PR #${session.prNumber}` });
+		const n = session.mdFiles.length;
+		prRow.createSpan({
+			cls: "mdpr-session-label",
+			text: `PR #${session.prNumber} · ${n} file${n === 1 ? "" : "s"}`,
+		});
 		const nextPr = prRow.createEl("button", {
 			cls: "mdpr-icon-btn",
 			attr: { "aria-label": "Next PR" },
 		});
 		setIcon(nextPr, "chevron-right");
 		nextPr.onclick = () => void this.openAdjacentPr(1);
+	}
 
-		if (session.mdFiles.length > 0) {
-			const fileRow = bar.createDiv({ cls: "mdpr-session-row" });
-			const prevFile = fileRow.createEl("button", {
-				cls: "mdpr-icon-btn",
-				attr: { "aria-label": "Previous file" },
-			});
-			setIcon(prevFile, "arrow-left");
-			prevFile.onclick = () => void this.plugin.openAdjacentFile(-1);
-			fileRow.createSpan({
-				cls: "mdpr-session-label",
-				text: `File ${session.fileIndex + 1}/${session.mdFiles.length}`,
-			});
-			const nextFile = fileRow.createEl("button", {
-				cls: "mdpr-icon-btn",
-				attr: { "aria-label": "Next file" },
-			});
-			setIcon(nextFile, "arrow-right");
-			nextFile.onclick = () => void this.plugin.openAdjacentFile(1);
+	private renderFileTree(c: HTMLElement): void {
+		const s = this.plugin.session;
+		if (!s || s.mdFiles.length === 0) return;
+		const wrap = c.createDiv({ cls: "mdpr-filetree" });
+		const nodes = buildFileTree(s.mdFiles);
+		this.renderTreeNodes(wrap, nodes, 0, "", s.mdFiles[s.fileIndex]);
+	}
+
+	private renderTreeNodes(
+		parent: HTMLElement,
+		nodes: TreeNode[],
+		depth: number,
+		prefix: string,
+		current: string
+	): void {
+		for (const node of nodes) {
+			const indent = depth * 12 + 8;
+			if (node.path !== undefined) {
+				const row = parent.createDiv({ cls: "mdpr-tree-row mdpr-tree-file" });
+				row.style.paddingLeft = `${indent}px`;
+				if (node.path === current) row.addClass("mdpr-tree-current");
+				if (this.plugin.isFileSeen(node.path)) row.addClass("mdpr-tree-seen");
+				const icon = row.createSpan({ cls: "mdpr-tree-icon" });
+				setIcon(icon, "file-text");
+				row.createSpan({ cls: "mdpr-tree-name", text: node.name });
+				const p = node.path;
+				row.onclick = () => void this.plugin.openSessionFileByPath(p);
+			} else {
+				const folderPath = `${prefix}${node.name}/`;
+				const collapsed = this.treeCollapsed.has(folderPath);
+				const row = parent.createDiv({ cls: "mdpr-tree-row mdpr-tree-folder" });
+				row.style.paddingLeft = `${indent}px`;
+				const icon = row.createSpan({ cls: "mdpr-tree-icon" });
+				setIcon(icon, collapsed ? "chevron-right" : "chevron-down");
+				row.createSpan({ cls: "mdpr-tree-name", text: node.name });
+				row.onclick = () => {
+					if (collapsed) this.treeCollapsed.delete(folderPath);
+					else this.treeCollapsed.add(folderPath);
+					this.render();
+				};
+				if (!collapsed) {
+					this.renderTreeNodes(parent, node.children, depth + 1, folderPath, current);
+				}
+			}
 		}
 	}
 

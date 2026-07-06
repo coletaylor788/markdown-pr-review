@@ -104,6 +104,8 @@ export interface QueueSession {
 	/** Repo-relative paths of the PR's changed markdown files. */
 	mdFiles: string[];
 	fileIndex: number;
+	/** Files opened during this session (for the tree's "seen" mark). */
+	seenFiles: string[];
 }
 
 export default class MdPrReviewPlugin extends Plugin {
@@ -394,6 +396,7 @@ export default class MdPrReviewPlugin extends Plugin {
 			headRefName: pr.headRefName,
 			mdFiles: markdownFiles(pr).map((f) => f.path),
 			fileIndex: 0,
+			seenFiles: [],
 		};
 		await this.persist();
 		this.refreshQueueView();
@@ -416,13 +419,27 @@ export default class MdPrReviewPlugin extends Plugin {
 		await this.openSessionFile(next);
 	}
 
+	async openSessionFileByPath(relPath: string): Promise<void> {
+		const s = this.session;
+		if (!s) return;
+		const idx = s.mdFiles.indexOf(relPath);
+		if (idx >= 0) await this.openSessionFile(idx);
+	}
+
+	isFileSeen(relPath: string): boolean {
+		return this.session?.seenFiles?.includes(relPath) ?? false;
+	}
+
 	private async openSessionFile(index: number): Promise<void> {
 		const s = this.session;
 		if (!s || index < 0 || index >= s.mdFiles.length) return;
 		s.fileIndex = index;
+		const relPath = s.mdFiles[index];
+		if (!s.seenFiles) s.seenFiles = [];
+		if (!s.seenFiles.includes(relPath)) s.seenFiles.push(relPath);
 		await this.persist();
-		await this.openPrFile(s.vaultMount, s.mdFiles[index], s.baseRef);
-		if (index === s.mdFiles.length - 1) this.markReviewed(s.prNumber);
+		await this.openPrFile(s.vaultMount, relPath, s.baseRef);
+		if (s.mdFiles.every((f) => s.seenFiles.includes(f))) this.markReviewed(s.prNumber);
 		this.refreshQueueView();
 	}
 
