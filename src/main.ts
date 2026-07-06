@@ -454,7 +454,14 @@ export default class MdPrReviewPlugin extends Plugin {
 			: relPath;
 		const file = await this.getFileWithRetry(vaultRel);
 		if (!file) {
-			new Notice(`Could not find ${vaultRel} in the vault.`);
+			const hidden = relPath.split("/").find((seg) => seg.startsWith("."));
+			if (hidden) {
+				new Notice(
+					`Obsidian doesn't index hidden folders, so ${relPath} can't be opened in the editor (folder "${hidden}/").`
+				);
+			} else {
+				new Notice(`Could not find ${vaultRel} in the vault.`);
+			}
 			return;
 		}
 		const leaf = this.app.workspace.getLeaf(false);
