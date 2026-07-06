@@ -67,6 +67,48 @@ export async function isTreeDirty(gitPath: string, repoRoot: string): Promise<bo
 	return res.code === 0 && res.stdout.trim().length > 0;
 }
 
+/**
+ * Ensure a path is ignored via .git/info/exclude — a per-repo, UNtracked ignore
+ * file. Unlike editing the tracked .gitignore, this never dirties the working
+ * tree (which would otherwise block PR switching and leak into commits).
+ * Worktree-safe via `git rev-parse --git-path`.
+ */
+export async function ensureExcluded(
+	gitPath: string,
+	repoRoot: string,
+	sidecarDir: string
+): Promise<void> {
+	const dir = sidecarDir.replace(/[/\\]+$/, "");
+	const entry = `${dir}/`;
+
+	let excludePath: string;
+	const res = await run(gitPath, ["rev-parse", "--git-path", "info/exclude"], {
+		cwd: repoRoot,
+	});
+	if (res.code === 0 && res.stdout.trim()) {
+		const p = res.stdout.trim();
+		excludePath = path.isAbsolute(p) ? p : path.join(repoRoot, p);
+	} else {
+		excludePath = path.join(repoRoot, ".git", "info", "exclude");
+	}
+
+	let content = "";
+	try {
+		content = await fsp.readFile(excludePath, "utf8");
+	} catch {
+		/* file may not exist yet */
+	}
+	const present = content
+		.split(/\r?\n/)
+		.map((l) => l.trim())
+		.some((l) => l === entry || l === dir);
+	if (present) return;
+
+	await fsp.mkdir(path.dirname(excludePath), { recursive: true });
+	const prefix = content && !content.endsWith("\n") ? "\n" : "";
+	await fsp.writeFile(excludePath, `${content}${prefix}${entry}\n`, "utf8");
+}
+
 /** File content at a specific ref (e.g. the PR head SHA), or null if absent. */
 export async function fileAtRef(
 	gitPath: string,

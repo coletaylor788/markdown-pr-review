@@ -73,25 +73,3 @@ export async function saveSidecar(
 	await fsp.mkdir(path.dirname(p), { recursive: true });
 	await fsp.writeFile(p, JSON.stringify(sc, null, 2) + "\n", "utf8");
 }
-
-/** Ensure the sidecar directory is gitignored (idempotent). */
-export async function ensureGitignore(repoRoot: string, sidecarDir: string): Promise<void> {
-	const giPath = path.join(repoRoot, ".gitignore");
-	const dir = sidecarDir.replace(/[/\\]+$/, "");
-	const entry = `${dir}/`;
-
-	let content = "";
-	try {
-		content = await fsp.readFile(giPath, "utf8");
-	} catch {
-		/* no .gitignore yet */
-	}
-	const present = content
-		.split(/\r?\n/)
-		.map((l) => l.trim())
-		.some((l) => l === entry || l === dir);
-	if (present) return;
-
-	const prefix = content && !content.endsWith("\n") ? "\n" : "";
-	await fsp.writeFile(giPath, `${content}${prefix}${entry}\n`, "utf8");
-}

@@ -42,7 +42,7 @@ import {
 } from "./diffExtension";
 import { computeDiff, DiffResult } from "./diff";
 import type { Text } from "@codemirror/state";
-import { locate, resolveBase, repoRootOf, isTreeDirty, GitError } from "./git";
+import { locate, resolveBase, repoRootOf, isTreeDirty, ensureExcluded, GitError } from "./git";
 import {
 	PullRequest,
 	markdownFiles,
@@ -68,7 +68,6 @@ import {
 	Sidecar,
 	loadSidecar,
 	saveSidecar,
-	ensureGitignore,
 } from "./sidecar";
 import { CommentModal } from "./commentModal";
 
@@ -704,9 +703,11 @@ export default class MdPrReviewPlugin extends Plugin {
 				this.activeDoc.sidecar.base =
 					this.session?.baseRef ?? this.settings.baseRefFallback;
 				await this.saveActiveSidecar();
-				await ensureGitignore(this.activeDoc.repoRoot, this.settings.sidecarDir).catch(
-					() => undefined
-				);
+				await ensureExcluded(
+					this.settings.gitPath,
+					this.activeDoc.repoRoot,
+					this.settings.sidecarDir
+				).catch(() => undefined);
 				this.refreshComments();
 			},
 		}).open();
