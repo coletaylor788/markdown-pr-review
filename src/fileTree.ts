@@ -6,6 +6,11 @@ export interface TreeNode {
 	children: TreeNode[];
 }
 
+/** A path Obsidian won't index because a segment is a dot-folder (.claude, .github…). */
+export function isHiddenPath(relPath: string): boolean {
+	return relPath.split("/").some((seg) => seg.startsWith("."));
+}
+
 /**
  * Build a folder tree from repo-relative file paths, with GitHub-style
  * compression of single-child folder chains (docs → specs collapses to

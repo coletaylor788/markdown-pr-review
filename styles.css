@@ -205,6 +205,13 @@
 .mdpr-tree-file.mdpr-tree-seen .mdpr-tree-name {
 	color: var(--text-faint);
 }
+.mdpr-tree-file.mdpr-tree-hidden {
+	cursor: default;
+	opacity: 0.5;
+}
+.mdpr-tree-file.mdpr-tree-hidden:hover {
+	background: transparent;
+}
 
 .mdpr-queue-status {
 	padding: 12px 8px;

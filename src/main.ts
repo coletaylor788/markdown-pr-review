@@ -59,6 +59,7 @@ import {
 	ReviewEvent,
 } from "./review";
 import { ReviewSubmitModal } from "./reviewSubmitModal";
+import { isHiddenPath } from "./fileTree";
 import { PR_QUEUE_VIEW_TYPE, PrQueueView } from "./prQueueView";
 import { COMMENT_PANEL_VIEW_TYPE, CommentPanelView } from "./commentPanel";
 import { commentExtension, setComments, setCommentClickHandler } from "./commentExtension";
@@ -438,7 +439,11 @@ export default class MdPrReviewPlugin extends Plugin {
 		if (!s.seenFiles.includes(relPath)) s.seenFiles.push(relPath);
 		await this.persist();
 		await this.openPrFile(s.vaultMount, relPath, s.baseRef);
-		if (s.mdFiles.every((f) => s.seenFiles.includes(f))) this.markReviewed(s.prNumber);
+		// A PR is "reviewed" once every openable (non-hidden) file has been seen.
+		const openable = s.mdFiles.filter((f) => !isHiddenPath(f));
+		if (openable.length > 0 && openable.every((f) => s.seenFiles.includes(f))) {
+			this.markReviewed(s.prNumber);
+		}
 		this.refreshQueueView();
 	}
 

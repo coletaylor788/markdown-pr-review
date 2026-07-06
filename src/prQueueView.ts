@@ -2,7 +2,7 @@ import { ItemView, WorkspaceLeaf, Notice, setIcon } from "obsidian";
 import type MdPrReviewPlugin from "./main";
 import type { RepoRef } from "./main";
 import { PullRequest, listPullRequests, markdownFiles, currentUser } from "./github";
-import { buildFileTree, TreeNode } from "./fileTree";
+import { buildFileTree, isHiddenPath, TreeNode } from "./fileTree";
 
 export const PR_QUEUE_VIEW_TYPE = "mdpr-pr-queue";
 
@@ -253,13 +253,27 @@ export class PrQueueView extends ItemView {
 			if (node.path !== undefined) {
 				const row = parent.createDiv({ cls: "mdpr-tree-row mdpr-tree-file" });
 				row.style.paddingLeft = `${indent}px`;
-				if (node.path === current) row.addClass("mdpr-tree-current");
-				if (this.plugin.isFileSeen(node.path)) row.addClass("mdpr-tree-seen");
-				const icon = row.createSpan({ cls: "mdpr-tree-icon" });
-				setIcon(icon, "file-text");
-				row.createSpan({ cls: "mdpr-tree-name", text: node.name });
 				const p = node.path;
-				row.onclick = () => void this.plugin.openSessionFileByPath(p);
+				const hidden = isHiddenPath(p);
+				if (hidden) {
+					row.addClass("mdpr-tree-hidden");
+				} else {
+					if (p === current) row.addClass("mdpr-tree-current");
+					if (this.plugin.isFileSeen(p)) row.addClass("mdpr-tree-seen");
+				}
+				const icon = row.createSpan({ cls: "mdpr-tree-icon" });
+				setIcon(icon, hidden ? "eye-off" : "file-text");
+				row.createSpan({ cls: "mdpr-tree-name", text: node.name });
+				if (hidden) {
+					const folder = p.split("/").find((s) => s.startsWith("."));
+					row.setAttr("aria-label", `In hidden folder "${folder}/" — review on GitHub`);
+					row.onclick = () =>
+						new Notice(
+							`${node.name} is in a hidden folder ("${folder}/"). Obsidian can't open it — review it on GitHub.`
+						);
+				} else {
+					row.onclick = () => void this.plugin.openSessionFileByPath(p);
+				}
 			} else {
 				const folderPath = `${prefix}${node.name}/`;
 				const collapsed = this.treeCollapsed.has(folderPath);
