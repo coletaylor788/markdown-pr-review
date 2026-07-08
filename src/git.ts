@@ -67,6 +67,31 @@ export async function isTreeDirty(gitPath: string, repoRoot: string): Promise<bo
 	return res.code === 0 && res.stdout.trim().length > 0;
 }
 
+/** Paths with tracked, uncommitted changes. */
+export async function dirtyFiles(gitPath: string, repoRoot: string): Promise<string[]> {
+	const res = await run(gitPath, ["status", "--porcelain", "--untracked-files=no"], {
+		cwd: repoRoot,
+	});
+	if (res.code !== 0) return [];
+	return res.stdout
+		.split(/\r?\n/)
+		.map((l) => l.slice(3).trim())
+		.filter(Boolean);
+}
+
+/** Stash tracked changes (recoverable with `git stash pop`). */
+export async function stashTracked(
+	gitPath: string,
+	repoRoot: string,
+	message: string
+): Promise<boolean> {
+	const res = await run(gitPath, ["stash", "push", "-m", message], {
+		cwd: repoRoot,
+		timeoutMs: 30000,
+	});
+	return res.code === 0;
+}
+
 /**
  * Ensure a path is ignored via .git/info/exclude — a per-repo, UNtracked ignore
  * file. Unlike editing the tracked .gitignore, this never dirties the working

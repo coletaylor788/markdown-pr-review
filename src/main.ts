@@ -42,7 +42,16 @@ import {
 } from "./diffExtension";
 import { computeDiff, DiffResult } from "./diff";
 import type { Text } from "@codemirror/state";
-import { locate, resolveBase, repoRootOf, isTreeDirty, ensureExcluded, GitError } from "./git";
+import {
+	locate,
+	resolveBase,
+	repoRootOf,
+	isTreeDirty,
+	dirtyFiles,
+	stashTracked,
+	ensureExcluded,
+	GitError,
+} from "./git";
 import {
 	PullRequest,
 	markdownFiles,
@@ -63,6 +72,7 @@ import {
 	ReviewEvent,
 } from "./review";
 import { ReviewSubmitModal } from "./reviewSubmitModal";
+import { ConfirmModal } from "./confirmModal";
 import { isHiddenPath } from "./fileTree";
 import { PR_QUEUE_VIEW_TYPE, PrQueueView } from "./prQueueView";
 import { COMMENT_PANEL_VIEW_TYPE, CommentPanelView } from "./commentPanel";
@@ -377,13 +387,41 @@ export default class MdPrReviewPlugin extends Plugin {
 		}
 		try {
 			if (await isTreeDirty(this.settings.gitPath, repo.repoRoot)) {
-				new Notice(
-					"Working tree has uncommitted changes — commit or stash before switching PRs."
+				const files = await dirtyFiles(this.settings.gitPath, repo.repoRoot);
+				const ok = await new Promise<boolean>((resolve) => {
+					new ConfirmModal(this.app, {
+						title: `Uncommitted changes in ${repo.name}`,
+						build: (el) => {
+							el.createEl("p", {
+								text: `${files.length} file(s) have uncommitted changes — often Obsidian reformatting a file you're reviewing:`,
+							});
+							const ul = el.createEl("ul");
+							for (const f of files.slice(0, 12)) ul.createEl("li", { text: f });
+							if (files.length > 12) {
+								el.createEl("p", { text: `…and ${files.length - 12} more` });
+							}
+							el.createEl("p", {
+								cls: "mdpr-modal-sub",
+								text: "Stash them and switch? Recover anytime with `git stash pop`.",
+							});
+						},
+						confirmText: "Stash & switch",
+						onResult: resolve,
+					}).open();
+				});
+				if (!ok) return;
+				const stashed = await stashTracked(
+					this.settings.gitPath,
+					repo.repoRoot,
+					`markdown-pr-review: before PR #${pr.number}`
 				);
-				return;
+				if (!stashed) {
+					new Notice("Stash failed — not switching.");
+					return;
+				}
 			}
-		} catch {
-			/* non-fatal: proceed if the dirty check itself fails */
+		} catch (e) {
+			console.error("[markdown-pr-review] dirty check", e);
 		}
 
 		new Notice(`Checking out PR #${pr.number}…`);
@@ -652,16 +690,11 @@ export default class MdPrReviewPlugin extends Plugin {
 				key,
 				comments.filter((c) => !this.isHiddenAuthor(c.login))
 			);
-			// Keep reviews that carry a message or a verdict (skip empty COMMENTED shells).
+			// Keep all non-hidden reviews; the panel decides which to show
+			// (a review appears if it has a body/verdict or holds comments here).
 			this.reviewsByPr.set(
 				key,
-				reviews.filter(
-					(r) =>
-						!this.isHiddenAuthor(r.login) &&
-						(r.body.trim() !== "" ||
-							r.state === "APPROVED" ||
-							r.state === "CHANGES_REQUESTED")
-				)
+				reviews.filter((r) => !this.isHiddenAuthor(r.login))
 			);
 		} catch (e) {
 			console.error("[markdown-pr-review] loadOthersComments", e);

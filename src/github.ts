@@ -132,6 +132,8 @@ export interface ReviewComment {
 	body: string;
 	createdAt: string;
 	inReplyToId: number | null;
+	/** The review this comment belongs to (pull_request_review_id). */
+	reviewId: number | null;
 }
 
 /** Existing inline review comments on a PR (up to 100). */
@@ -165,6 +167,7 @@ export async function listReviewComments(
 			body: (c.body as string) ?? "",
 			createdAt: (c.created_at as string) ?? "",
 			inReplyToId: (c.in_reply_to_id as number) ?? null,
+			reviewId: (c.pull_request_review_id as number) ?? null,
 		}));
 	} catch (e) {
 		throw new GhError("Could not parse review comments: " + String(e));

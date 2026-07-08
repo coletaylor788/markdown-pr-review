@@ -69,9 +69,8 @@ export class CommentPanelView extends ItemView {
 		const others = this.plugin.othersForActiveDoc();
 		const loading = this.plugin.othersLoadingNow();
 
-		this.renderReviews(c, reviews);
+		this.renderReviewsWithComments(c, reviews, others, loading);
 		this.renderUnposted(c, unposted);
-		this.renderComments(c, others, loading);
 
 		if (
 			reviews.length === 0 &&
@@ -112,13 +111,45 @@ export class CommentPanelView extends ItemView {
 		h.createSpan({ cls: "mdpr-section-count", text: String(count) });
 	}
 
-	private renderReviews(c: HTMLElement, reviews: ReturnType<MdPrReviewPlugin["prReviews"]>): void {
-		if (reviews.length === 0) return;
+	private renderReviewsWithComments(
+		c: HTMLElement,
+		reviews: ReturnType<MdPrReviewPlugin["prReviews"]>,
+		others: ReviewComment[],
+		loading: boolean
+	): void {
+		// Group inline comments (on this file) under their parent review.
+		const reviewIds = new Set(reviews.map((r) => r.id));
+		const byReview = new Map<number, ReviewComment[]>();
+		const orphans: ReviewComment[] = [];
+		for (const rc of others) {
+			if (rc.reviewId != null && reviewIds.has(rc.reviewId)) {
+				const arr = byReview.get(rc.reviewId) ?? [];
+				arr.push(rc);
+				byReview.set(rc.reviewId, arr);
+			} else {
+				orphans.push(rc);
+			}
+		}
+		// Show a review if it has a verdict/message, or holds comments on this file.
+		const shown = reviews.filter((r) => {
+			const hasVerdict =
+				r.body.trim() !== "" || r.state === "APPROVED" || r.state === "CHANGES_REQUESTED";
+			return hasVerdict || (byReview.get(r.id)?.length ?? 0) > 0;
+		});
+
+		if (shown.length === 0 && orphans.length === 0 && !loading) return;
+
+		const count = shown.length + (orphans.length ? 1 : 0);
 		const body = this.collapsible(c, "reviews", (h) =>
-			this.sectionTitle(h, "PR reviews", reviews.length)
+			this.sectionTitle(h, "PR reviews", count)
 		);
 		if (!body) return;
-		for (const r of reviews) {
+		if (loading && shown.length === 0 && orphans.length === 0) {
+			body.createDiv({ cls: "mdpr-queue-status", text: "Loading…" });
+			return;
+		}
+
+		for (const r of shown) {
 			const sub = this.collapsible(
 				body,
 				`review:${r.id}`,
@@ -133,7 +164,36 @@ export class CommentPanelView extends ItemView {
 				},
 				"mdpr-subsection"
 			);
-			if (sub && r.body.trim()) sub.createDiv({ cls: "mdpr-review-body", text: r.body });
+			if (!sub) continue;
+			if (r.body.trim()) sub.createDiv({ cls: "mdpr-review-body", text: r.body });
+			for (const rc of byReview.get(r.id) ?? []) this.renderInlineComment(sub, rc);
+		}
+
+		if (orphans.length) {
+			const sub = this.collapsible(
+				body,
+				"review:orphan",
+				(h) => {
+					h.createSpan({ cls: "mdpr-other-author", text: "Comments" });
+					h.createSpan({ cls: "mdpr-section-count", text: String(orphans.length) });
+				},
+				"mdpr-subsection"
+			);
+			if (sub) for (const rc of orphans) this.renderInlineComment(sub, rc);
+		}
+	}
+
+	private renderInlineComment(parent: HTMLElement, rc: ReviewComment): void {
+		const row = parent.createDiv({ cls: "mdpr-comment-row mdpr-other-row" });
+		if (rc.line) {
+			const head = row.createDiv({ cls: "mdpr-other-head" });
+			head.createSpan({ cls: "mdpr-other-line", text: `L${rc.line}` });
+		}
+		row.createDiv({ cls: "mdpr-comment-body", text: rc.body });
+		if (rc.line) {
+			const act = row.createDiv({ cls: "mdpr-comment-actions" });
+			const line = rc.line;
+			this.iconButton(act, "crosshair", "Jump to line", () => this.plugin.jumpToLine(line));
 		}
 	}
 
@@ -144,52 +204,6 @@ export class CommentPanelView extends ItemView {
 		);
 		if (!body) return;
 		for (const item of unposted) this.renderLocalComment(body, item);
-	}
-
-	private renderComments(c: HTMLElement, others: ReviewComment[], loading: boolean): void {
-		if (others.length === 0 && !loading) return;
-		const body = this.collapsible(c, "comments", (h) =>
-			this.sectionTitle(h, "Comments", others.length)
-		);
-		if (!body) return;
-		if (loading && others.length === 0) {
-			body.createDiv({ cls: "mdpr-queue-status", text: "Loading…" });
-			return;
-		}
-		// Group inline comments by author into collapsible subsections.
-		const byAuthor = new Map<string, ReviewComment[]>();
-		for (const rc of others) {
-			const arr = byAuthor.get(rc.login) ?? [];
-			arr.push(rc);
-			byAuthor.set(rc.login, arr);
-		}
-		for (const [login, list] of byAuthor) {
-			const sub = this.collapsible(
-				body,
-				`comments:${login}`,
-				(h) => {
-					h.createSpan({ cls: "mdpr-other-author", text: login });
-					h.createSpan({ cls: "mdpr-section-count", text: String(list.length) });
-				},
-				"mdpr-subsection"
-			);
-			if (!sub) continue;
-			for (const rc of list) {
-				const row = sub.createDiv({ cls: "mdpr-comment-row mdpr-other-row" });
-				if (rc.line) {
-					const head = row.createDiv({ cls: "mdpr-other-head" });
-					head.createSpan({ cls: "mdpr-other-line", text: `L${rc.line}` });
-				}
-				row.createDiv({ cls: "mdpr-comment-body", text: rc.body });
-				if (rc.line) {
-					const act = row.createDiv({ cls: "mdpr-comment-actions" });
-					const line = rc.line;
-					this.iconButton(act, "crosshair", "Jump to line", () =>
-						this.plugin.jumpToLine(line)
-					);
-				}
-			}
-		}
 	}
 
 	private renderLocalComment(list: HTMLElement, item: ActiveCommentItem): void {
