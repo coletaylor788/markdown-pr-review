@@ -69,7 +69,8 @@ npm version patch --no-git-tag-version   # 2. bump version in package.json;
                                     #    + versions.json and stages them
 git add -A                          # 3. include the rebuilt main.js
 git commit -m "Release v$(node -p "require('./manifest.json').version")"
-git tag "$(node -p "require('./manifest.json').version")"   # 4. optional tag
+git tag -a "$(node -p "require('./manifest.json').version")" \
+  -m "$(node -p "require('./manifest.json').version")"   # 4. annotated tag (optional)
 git push --follow-tags
 ```
 
