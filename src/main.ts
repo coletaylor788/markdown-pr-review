@@ -1008,6 +1008,12 @@ export default class MdPrReviewPlugin extends Plugin {
 			);
 			this.refreshComments();
 		}
+		// Posted comments now live on GitHub — drop the cache so they move from
+		// "Unposted" into "Comments" on the next fetch.
+		const key = `${s.repoRoot}#${s.prNumber}`;
+		this.othersComments.delete(key);
+		this.reviewsByPr.delete(key);
+		void this.loadOthersComments();
 		new Notice(`Posted review to PR #${s.prNumber}.`);
 	}
 

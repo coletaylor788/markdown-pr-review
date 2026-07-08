@@ -339,16 +339,46 @@
 	box-shadow: inset 3px 0 0 var(--interactive-accent);
 }
 
-/* Others' (existing GitHub) comments */
-.mdpr-others-header {
-	padding: 8px 8px 4px;
+/* Collapsible panel sections */
+.mdpr-section {
+	border-top: 1px solid var(--background-modifier-border);
+}
+.mdpr-section-header {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 8px;
+	cursor: pointer;
+}
+.mdpr-section-header:hover {
+	background: var(--background-modifier-hover);
+}
+.mdpr-section-chev {
+	display: inline-flex;
+	flex-shrink: 0;
+	color: var(--text-muted);
+}
+.mdpr-section-chev svg {
+	width: 14px;
+	height: 14px;
+}
+.mdpr-section-title {
 	font-size: var(--font-ui-smaller);
 	font-weight: 600;
 	text-transform: uppercase;
 	letter-spacing: 0.04em;
 	color: var(--text-muted);
-	border-top: 1px solid var(--background-modifier-border);
-	margin-top: 4px;
+}
+.mdpr-section-count {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+	margin-left: auto;
+}
+.mdpr-subsection > .mdpr-section-header {
+	padding-left: 22px;
+}
+.mdpr-subsection {
+	border-top: none;
 }
 .mdpr-other-head {
 	display: flex;
