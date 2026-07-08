@@ -92,22 +92,6 @@ export class PrQueueView extends ItemView {
 		return list;
 	}
 
-	private activeIndex(visible: PullRequest[]): number {
-		const n = this.plugin.session?.prNumber;
-		return n == null ? -1 : visible.findIndex((p) => p.number === n);
-	}
-
-	async openAdjacentPr(delta: number): Promise<void> {
-		const visible = this.visiblePrs();
-		const idx = this.activeIndex(visible);
-		const next = idx < 0 ? 0 : idx + delta;
-		if (next < 0 || next >= visible.length) {
-			new Notice("No more pull requests in that direction.");
-			return;
-		}
-		await this.plugin.openPullRequest(visible[next]);
-	}
-
 	render(): void {
 		const c = this.contentEl;
 		c.empty();
@@ -212,25 +196,11 @@ export class PrQueueView extends ItemView {
 		const session = this.plugin.session;
 		if (!session) return;
 		const bar = c.createDiv({ cls: "mdpr-session" });
-
-		const prRow = bar.createDiv({ cls: "mdpr-session-row" });
-		const prevPr = prRow.createEl("button", {
-			cls: "mdpr-icon-btn",
-			attr: { "aria-label": "Previous PR" },
-		});
-		setIcon(prevPr, "chevron-left");
-		prevPr.onclick = () => void this.openAdjacentPr(-1);
 		const n = session.mdFiles.length;
-		prRow.createSpan({
+		bar.createDiv({ cls: "mdpr-session-row" }).createSpan({
 			cls: "mdpr-session-label",
 			text: `PR #${session.prNumber} · ${n} file${n === 1 ? "" : "s"}`,
 		});
-		const nextPr = prRow.createEl("button", {
-			cls: "mdpr-icon-btn",
-			attr: { "aria-label": "Next PR" },
-		});
-		setIcon(nextPr, "chevron-right");
-		nextPr.onclick = () => void this.openAdjacentPr(1);
 	}
 
 	private renderFileTree(c: HTMLElement): void {
