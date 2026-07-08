@@ -9,6 +9,8 @@ export interface MdPrReviewSettings {
 	sidecarDir: string;
 	/** Paint a full-line background on changed lines in addition to the gutter sign. */
 	highlightLineBackground: boolean;
+	/** Global on/off for diff highlighting (applies to every file until toggled). */
+	diffEnabled: boolean;
 	/** Hide PRs from the queue that change no markdown files. */
 	markdownOnlyQueue: boolean;
 	/** Comma-separated login substrings whose PR comments are hidden (e.g. "copilot"). */
@@ -25,6 +27,7 @@ export const DEFAULT_SETTINGS: MdPrReviewSettings = {
 	defaultAuthorFilter: "",
 	sidecarDir: ".pr-review",
 	highlightLineBackground: false,
+	diffEnabled: true,
 	markdownOnlyQueue: true,
 	hideCommentsFrom: "copilot",
 	ghPath: "gh",

@@ -36,7 +36,6 @@ import {
 	diffExtension,
 	enableDiff,
 	disableDiff,
-	isDiffEnabled,
 	retriggerDiff,
 	setLineBackground,
 } from "./diffExtension";
@@ -158,12 +157,7 @@ export default class MdPrReviewPlugin extends Plugin {
 			void this.activateQueueView();
 		});
 		this.addRibbonIcon("git-compare", "Toggle PR diff highlight", () => {
-			const view = this.activeMarkdownView();
-			if (!view || !view.file) {
-				new Notice("Open a markdown file in a git repository first.");
-				return;
-			}
-			void this.toggleDiff(view);
+			void this.toggleDiffGlobal();
 		});
 		this.addRibbonIcon("message-square", "Open PR comments panel", () => {
 			void this.activateView(COMMENT_PANEL_VIEW_TYPE);
@@ -219,12 +213,7 @@ export default class MdPrReviewPlugin extends Plugin {
 		this.addCommand({
 			id: "toggle-pr-diff-highlight",
 			name: "Toggle PR diff highlight",
-			checkCallback: (checking) => {
-				const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (!view || view.file == null) return false;
-				if (!checking) void this.toggleDiff(view);
-				return true;
-			},
+			callback: () => void this.toggleDiffGlobal(),
 		});
 
 		this.addCommand({
@@ -266,43 +255,51 @@ export default class MdPrReviewPlugin extends Plugin {
 			: null;
 	}
 
-	async toggleDiff(view: MarkdownView): Promise<void> {
-		const cm = this.cmOf(view);
-		if (cm && isDiffEnabled(cm)) {
-			disableDiff(cm);
-			new Notice("PR diff highlight off");
-			return;
+	/** Flip the global diff-highlight state and apply it to every open editor. */
+	async toggleDiffGlobal(): Promise<void> {
+		this.settings.diffEnabled = !this.settings.diffEnabled;
+		await this.saveSettings();
+		new Notice(this.settings.diffEnabled ? "PR diff highlight on" : "PR diff highlight off");
+		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+			const view = leaf.view;
+			if (view instanceof MarkdownView) await this.applyDiffToView(view);
 		}
-		await this.enableDiffForView(view, this.settings.baseRefFallback);
 	}
 
-	/** Resolve the base for `view`'s file against `baseRef` and turn the diff on. */
-	async enableDiffForView(view: MarkdownView, baseRef: string): Promise<void> {
+	/** Apply the current global diff state to a view — silently (no per-file notices). */
+	async applyDiffToView(view: MarkdownView): Promise<void> {
+		if (this.settings.diffEnabled) {
+			const baseRef = this.session ? this.session.baseRef : this.settings.baseRefFallback;
+			await this.enableDiffForView(view, baseRef, { silent: true });
+		} else {
+			const cm = this.cmOf(view);
+			if (cm) disableDiff(cm);
+		}
+	}
+
+	/** Resolve the base for `view`'s file and turn the diff on. Silent unless asked. */
+	async enableDiffForView(
+		view: MarkdownView,
+		baseRef: string,
+		opts: { silent?: boolean } = {}
+	): Promise<void> {
 		let cm = this.cmOf(view);
 		for (let i = 0; i < 6 && !cm; i++) {
 			await sleep(120);
 			cm = this.cmOf(view);
 		}
 		const file = view.file;
-		if (!cm || !file) {
-			new Notice("Switch to editing view to see the PR diff.");
-			return;
-		}
+		if (!cm || !file) return; // reading view / not ready — nothing to do, silently
 		const abs = this.absPathOf(file);
-		if (!abs) {
-			new Notice("PR diff highlight needs a local (filesystem) vault.");
-			return;
-		}
+		if (!abs) return;
 		try {
 			const loc = await locate(this.settings.gitPath, abs);
 			const base = await resolveBase(this.settings.gitPath, loc, baseRef);
 			enableDiff(cm, base.baseText);
-			new Notice(
-				base.isNew ? "PR diff: new file (all lines added)" : "PR diff highlight on"
-			);
 		} catch (e) {
-			const msg = e instanceof GitError ? e.message : String(e);
-			new Notice(`PR diff failed: ${msg}`);
+			if (!opts.silent) {
+				new Notice(`PR diff failed: ${e instanceof GitError ? e.message : String(e)}`);
+			}
 			console.error("[markdown-pr-review] enableDiffForView", e);
 		}
 	}
@@ -531,7 +528,7 @@ export default class MdPrReviewPlugin extends Plugin {
 		await leaf.openFile(file);
 		const view = leaf.view;
 		if (view instanceof MarkdownView) {
-			await this.enableDiffForView(view, baseRef);
+			await this.applyDiffToView(view);
 		}
 	}
 
@@ -604,6 +601,7 @@ export default class MdPrReviewPlugin extends Plugin {
 		}
 		this.refreshComments();
 		void this.refreshPrLocal();
+		if (view instanceof MarkdownView) void this.applyDiffToView(view);
 	}
 
 	/** Re-resolve anchors against the live editor and push marks + panel. */
