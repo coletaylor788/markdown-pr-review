@@ -30,16 +30,26 @@ Early development. Built in phases:
 
 ## Install
 
-The built plugin (`main.js`, `manifest.json`, `styles.css`) is committed to the
-repo, so you can install it straight from git — no build step needed:
+**Via [BRAT](https://github.com/TfTHacker/obsidian42-brat) (recommended — gets updates):**
+Install BRAT from Community Plugins, then **BRAT → Add beta plugin** and enter:
+
+```
+coletaylor788/markdown-pr-review
+```
+
+BRAT installs the latest GitHub release and keeps it updated. Then enable
+**Markdown PR Review** in Community plugins.
+
+**Or clone straight from git** (the built `main.js`, `manifest.json`, `styles.css`
+are committed, so no build step):
 
 ```bash
 git clone https://github.com/coletaylor788/markdown-pr-review.git \
   /path/to/vault/.obsidian/plugins/markdown-pr-review
 ```
 
-Then in Obsidian: **Settings → Community plugins → Reload**, and enable
-**Markdown PR Review**. To update later, `git pull` in that folder and reload.
+Then **Settings → Community plugins → Reload**, and enable it. Update later with
+`git pull` in that folder and reload.
 
 ## Development
 
@@ -59,8 +69,8 @@ then enable the plugin in Obsidian and reload.
 
 ## Releasing (pushing a new version)
 
-`main.js` is tracked in git, so a "release" is just building and committing the
-bundle. No CI is involved.
+`main.js` is tracked in git, so a "release" is building the bundle, committing
+it, and cutting a GitHub release (which is what BRAT installs from). No CI.
 
 ```bash
 npm run build                       # 1. produce a fresh production main.js
@@ -68,16 +78,16 @@ npm version patch --no-git-tag-version   # 2. bump version in package.json;
                                     #    the "version" script updates manifest.json
                                     #    + versions.json and stages them
 git add -A                          # 3. include the rebuilt main.js
-git commit -m "Release v$(node -p "require('./manifest.json').version")"
-git tag -a "$(node -p "require('./manifest.json').version")" \
-  -m "$(node -p "require('./manifest.json').version")"   # 4. annotated tag (optional)
+V=$(node -p "require('./manifest.json').version")
+git commit -m "Release v$V"
+git tag -a "$V" -m "$V"             # 4. annotated tag (matches manifest version)
 git push --follow-tags
+gh release create "$V" main.js manifest.json styles.css --title "$V"   # 5. for BRAT
 ```
 
-Use `minor` or `major` instead of `patch` as appropriate. Anyone who has cloned
-the repo picks up the new version with `git pull` + reload. (A tag also lets you
-`gh release create <tag> main.js manifest.json styles.css` if you want a
-BRAT-installable release.)
+Use `minor` or `major` instead of `patch` as appropriate. Step 5 is what makes
+the new version available to BRAT users (and the tag/release name must match the
+`version` in `manifest.json`). Git-clone users just `git pull` + reload.
 
 ## Sidecar format
 
