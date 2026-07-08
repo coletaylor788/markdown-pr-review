@@ -3674,6 +3674,13 @@ var sleep2 = (ms) => new Promise((r) => setTimeout(r, ms));
 function genId() {
   return "c_" + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
 }
+async function realpathSafe(p) {
+  try {
+    return await import_fs4.promises.realpath(p);
+  } catch {
+    return p;
+  }
+}
 function changedLineSet2(doc, result) {
   const set = /* @__PURE__ */ new Set();
   const clampN = (n) => n < 0 ? 0 : n > doc.length ? doc.length : n;
@@ -4012,25 +4019,22 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
     if (!s.seenFiles) s.seenFiles = [];
     if (!s.seenFiles.includes(relPath)) s.seenFiles.push(relPath);
     await this.persist();
-    await this.openPrFile(s.vaultMount, relPath, s.baseRef);
+    await this.openPrFile(relPath, s.baseRef);
     const openable = s.mdFiles.filter((f) => !isHiddenPath(f));
     if (openable.length > 0 && openable.every((f) => s.seenFiles.includes(f))) {
       this.markReviewed(s.prNumber);
     }
     this.refreshQueueView();
   }
-  async openPrFile(vaultMount, relPath, baseRef) {
-    const vaultRel = vaultMount ? `${vaultMount.replace(/\/+$/, "")}/${relPath}` : relPath;
-    const file = await this.getFileWithRetry(vaultRel);
+  async openPrFile(relPath, baseRef) {
+    const s = this.session;
+    if (!s) return;
+    const file = await this.findVaultFile(s.repoRoot, s.vaultMount, relPath);
     if (!file) {
       const hidden = relPath.split("/").find((seg) => seg.startsWith("."));
-      if (hidden) {
-        new import_obsidian7.Notice(
-          `Obsidian doesn't index hidden folders, so ${relPath} can't be opened in the editor (folder "${hidden}/").`
-        );
-      } else {
-        new import_obsidian7.Notice(`Could not find ${vaultRel} in the vault.`);
-      }
+      new import_obsidian7.Notice(
+        hidden ? `Obsidian doesn't index hidden folders, so ${relPath} can't be opened (folder "${hidden}/").` : `Could not find ${relPath} in the vault.`
+      );
       return;
     }
     const leaf = this.app.workspace.getLeaf(false);
@@ -4039,6 +4043,26 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
     if (view instanceof import_obsidian7.MarkdownView) {
       await this.applyDiffToView(view);
     }
+  }
+  /**
+   * Find the vault file for a repo-relative path. Tries the session's vault
+   * mount first, then falls back to matching any vault file whose real
+   * (symlink-resolved) path equals repoRoot/relPath — so a repo symlinked under
+   * a different folder name (or a stale mount) still resolves.
+   */
+  async findVaultFile(repoRoot, vaultMount, relPath) {
+    const direct = vaultMount ? `${vaultMount.replace(/\/+$/, "")}/${relPath}` : relPath;
+    const quick = await this.getFileWithRetry(direct, 4);
+    if (quick) return quick;
+    const realTarget = await realpathSafe(path4.join(repoRoot, relPath));
+    const suffix = "/" + relPath;
+    const candidates = this.app.vault.getFiles().filter((f) => f.path === relPath || f.path.endsWith(suffix));
+    for (const c of candidates) {
+      const abs = this.absPathOf(c);
+      if (!abs) continue;
+      if (await realpathSafe(abs) === realTarget) return c;
+    }
+    return candidates.length === 1 ? candidates[0] : null;
   }
   async getFileWithRetry(vaultRel, tries = 6) {
     for (let i = 0; i < tries; i++) {
@@ -4253,7 +4277,7 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
       const v = this.activeMarkdownView();
       if (v && this.cmOf(v)) return;
     }
-    await this.openPrFile(s.vaultMount, relPath, s.baseRef);
+    await this.openPrFile(relPath, s.baseRef);
   }
   async openFileAndJumpLine(relPath, line) {
     await this.ensureFileOpen(relPath);

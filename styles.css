@@ -76,6 +76,7 @@
 
 .mdpr-queue {
 	padding: 0;
+	overflow-y: auto;
 }
 
 .mdpr-queue-header {
@@ -84,10 +85,7 @@
 	gap: 6px;
 	padding: 8px;
 	border-bottom: 1px solid var(--background-modifier-border);
-	position: sticky;
-	top: 0;
 	background: var(--background-secondary);
-	z-index: 1;
 }
 
 .mdpr-queue-title-row {
@@ -163,8 +161,6 @@
 
 /* Changed-files tree for the active PR */
 .mdpr-filetree {
-	max-height: 45vh;
-	overflow-y: auto;
 	padding: 4px 0;
 	border-bottom: 1px solid var(--background-modifier-border);
 }

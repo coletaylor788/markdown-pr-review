@@ -16,6 +16,14 @@ function genId(): string {
 	return "c_" + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
 }
 
+async function realpathSafe(p: string): Promise<string> {
+	try {
+		return await fsp.realpath(p);
+	} catch {
+		return p;
+	}
+}
+
 /** Set of 1-based line numbers touched by the diff (added/modified/deleted). */
 function changedLineSet(doc: Text, result: DiffResult): Set<number> {
 	const set = new Set<number>();
@@ -493,7 +501,7 @@ export default class MdPrReviewPlugin extends Plugin {
 		if (!s.seenFiles) s.seenFiles = [];
 		if (!s.seenFiles.includes(relPath)) s.seenFiles.push(relPath);
 		await this.persist();
-		await this.openPrFile(s.vaultMount, relPath, s.baseRef);
+		await this.openPrFile(relPath, s.baseRef);
 		// A PR is "reviewed" once every openable (non-hidden) file has been seen.
 		const openable = s.mdFiles.filter((f) => !isHiddenPath(f));
 		if (openable.length > 0 && openable.every((f) => s.seenFiles.includes(f))) {
@@ -502,26 +510,17 @@ export default class MdPrReviewPlugin extends Plugin {
 		this.refreshQueueView();
 	}
 
-	private async openPrFile(
-		vaultMount: string,
-		relPath: string,
-		baseRef: string
-	): Promise<void> {
-		// The repo may be symlinked into the vault, so map via the vault mount,
-		// not the repo's real path.
-		const vaultRel = vaultMount
-			? `${vaultMount.replace(/\/+$/, "")}/${relPath}`
-			: relPath;
-		const file = await this.getFileWithRetry(vaultRel);
+	private async openPrFile(relPath: string, baseRef: string): Promise<void> {
+		const s = this.session;
+		if (!s) return;
+		const file = await this.findVaultFile(s.repoRoot, s.vaultMount, relPath);
 		if (!file) {
 			const hidden = relPath.split("/").find((seg) => seg.startsWith("."));
-			if (hidden) {
-				new Notice(
-					`Obsidian doesn't index hidden folders, so ${relPath} can't be opened in the editor (folder "${hidden}/").`
-				);
-			} else {
-				new Notice(`Could not find ${vaultRel} in the vault.`);
-			}
+			new Notice(
+				hidden
+					? `Obsidian doesn't index hidden folders, so ${relPath} can't be opened (folder "${hidden}/").`
+					: `Could not find ${relPath} in the vault.`
+			);
 			return;
 		}
 		const leaf = this.app.workspace.getLeaf(false);
@@ -530,6 +529,36 @@ export default class MdPrReviewPlugin extends Plugin {
 		if (view instanceof MarkdownView) {
 			await this.applyDiffToView(view);
 		}
+	}
+
+	/**
+	 * Find the vault file for a repo-relative path. Tries the session's vault
+	 * mount first, then falls back to matching any vault file whose real
+	 * (symlink-resolved) path equals repoRoot/relPath — so a repo symlinked under
+	 * a different folder name (or a stale mount) still resolves.
+	 */
+	private async findVaultFile(
+		repoRoot: string,
+		vaultMount: string,
+		relPath: string
+	): Promise<TFile | null> {
+		const direct = vaultMount
+			? `${vaultMount.replace(/\/+$/, "")}/${relPath}`
+			: relPath;
+		const quick = await this.getFileWithRetry(direct, 4);
+		if (quick) return quick;
+
+		const realTarget = await realpathSafe(path.join(repoRoot, relPath));
+		const suffix = "/" + relPath;
+		const candidates = this.app.vault
+			.getFiles()
+			.filter((f) => f.path === relPath || f.path.endsWith(suffix));
+		for (const c of candidates) {
+			const abs = this.absPathOf(c);
+			if (!abs) continue;
+			if ((await realpathSafe(abs)) === realTarget) return c;
+		}
+		return candidates.length === 1 ? candidates[0] : null;
 	}
 
 	private async getFileWithRetry(vaultRel: string, tries = 6): Promise<TFile | null> {
@@ -798,7 +827,7 @@ export default class MdPrReviewPlugin extends Plugin {
 			const v = this.activeMarkdownView();
 			if (v && this.cmOf(v)) return;
 		}
-		await this.openPrFile(s.vaultMount, relPath, s.baseRef);
+		await this.openPrFile(relPath, s.baseRef);
 	}
 
 	async openFileAndJumpLine(relPath: string, line: number): Promise<void> {
