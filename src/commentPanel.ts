@@ -184,7 +184,10 @@ export class CommentPanelView extends ItemView {
 	}
 
 	private renderInlineComment(parent: HTMLElement, rc: ReviewComment): void {
-		const row = parent.createDiv({ cls: "mdpr-comment-row mdpr-other-row" });
+		const row = parent.createDiv({
+			cls: "mdpr-comment-row mdpr-other-row",
+			attr: { "data-mdpr-other-row": String(rc.id) },
+		});
 		if (rc.line) {
 			const head = row.createDiv({ cls: "mdpr-other-head" });
 			head.createSpan({ cls: "mdpr-other-line", text: `L${rc.line}` });
@@ -252,6 +255,30 @@ export class CommentPanelView extends ItemView {
 			.forEach((el) => el.removeClass("mdpr-flash"));
 		const row = this.contentEl.querySelector(
 			`.mdpr-comment-row[data-mdpr-row="${id}"]`
+		) as HTMLElement | null;
+		if (!row) return;
+		row.addClass("mdpr-flash");
+		row.scrollIntoView({ block: "center", behavior: "smooth" });
+	}
+
+	/** Expand the review holding another reviewer's comment and flash it. */
+	revealOther(id: string): void {
+		const rc = this.plugin.othersForActiveDoc().find((c) => String(c.id) === id);
+		if (!rc) return;
+		const reviewIds = new Set(this.plugin.prReviews().map((r) => r.id));
+		const key =
+			rc.reviewId != null && reviewIds.has(rc.reviewId)
+				? `review:${rc.reviewId}`
+				: "review:orphan";
+		this.collapsed.delete("reviews");
+		this.collapsed.delete(key);
+		this.render();
+
+		this.contentEl
+			.querySelectorAll(".mdpr-comment-row.mdpr-flash")
+			.forEach((el) => el.removeClass("mdpr-flash"));
+		const row = this.contentEl.querySelector(
+			`.mdpr-comment-row[data-mdpr-other-row="${id}"]`
 		) as HTMLElement | null;
 		if (!row) return;
 		row.addClass("mdpr-flash");

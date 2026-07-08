@@ -295,6 +295,12 @@
 	border-bottom: 1px dotted var(--text-faint);
 }
 
+/* Another reviewer's (GitHub) comment — line-anchored, distinct colour. */
+.mdpr-other-mark {
+	background-color: rgba(88, 166, 255, 0.16);
+	border-bottom: 1px dotted var(--color-blue, #58a6ff);
+}
+
 /* ------------------------------------------------------------------ */
 /* Comments panel                                                      */
 /* ------------------------------------------------------------------ */

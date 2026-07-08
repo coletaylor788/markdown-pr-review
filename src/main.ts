@@ -76,7 +76,13 @@ import { ConfirmModal } from "./confirmModal";
 import { isHiddenPath } from "./fileTree";
 import { PR_QUEUE_VIEW_TYPE, PrQueueView } from "./prQueueView";
 import { COMMENT_PANEL_VIEW_TYPE, CommentPanelView } from "./commentPanel";
-import { commentExtension, setComments, setCommentClickHandler } from "./commentExtension";
+import {
+	commentExtension,
+	setComments,
+	setOtherComments,
+	setCommentClickHandler,
+	setOtherClickHandler,
+} from "./commentExtension";
 import { captureAnchor, resolveAnchor, ResolvedRange } from "./anchor";
 import {
 	Comment,
@@ -204,6 +210,7 @@ export default class MdPrReviewPlugin extends Plugin {
 
 		// Clicking a commented line in the editor reveals it in the panel.
 		setCommentClickHandler((id) => void this.revealComment(id));
+		setOtherClickHandler((id) => void this.revealOtherComment(id));
 
 		this.addCommand({
 			id: "toggle-pr-diff-highlight",
@@ -621,6 +628,18 @@ export default class MdPrReviewPlugin extends Plugin {
 						resolved: i.comment.status === "resolved",
 					}))
 			);
+			// Others' (GitHub) comments — line-anchored marks in the editor.
+			const doc = cm.state.doc;
+			setOtherComments(
+				cm,
+				this.othersForActiveDoc()
+					.filter((o) => o.line != null)
+					.map((o) => {
+						const n = Math.min(Math.max(o.line as number, 1), doc.lines);
+						const l = doc.line(n);
+						return { id: String(o.id), from: l.from, to: l.to };
+					})
+			);
 		}
 		this.refreshCommentPanel();
 	}
@@ -700,8 +719,20 @@ export default class MdPrReviewPlugin extends Plugin {
 			console.error("[markdown-pr-review] loadOthersComments", e);
 		} finally {
 			this.othersLoading.delete(key);
-			this.refreshCommentPanel();
+			// refreshComments also paints the others' editor marks now that they're loaded.
+			this.refreshComments();
 		}
+	}
+
+	revealOtherComment(id: string): void {
+		this.app.workspace
+			.getLeavesOfType(COMMENT_PANEL_VIEW_TYPE)
+			.forEach((leaf) => {
+				if (leaf.view instanceof CommentPanelView) {
+					this.app.workspace.revealLeaf(leaf);
+					leaf.view.revealOther(id);
+				}
+			});
 	}
 
 	jumpToLine(line: number): void {
