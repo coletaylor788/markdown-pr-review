@@ -1,6 +1,6 @@
 {
 	"name": "markdown-pr-review",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"description": "Review GitHub markdown pull requests inside Obsidian.",
 	"main": "main.js",
 	"type": "module",
