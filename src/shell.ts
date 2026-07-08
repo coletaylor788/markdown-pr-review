@@ -25,15 +25,19 @@ function buildEnv(): NodeJS.ProcessEnv {
 	return env;
 }
 
-/**
- * Run an executable with arguments (no shell — args are passed directly, so no
- * quoting/injection concerns). Never rejects: failures come back as a non-zero
- * `code` with `stderr` populated.
- */
-export function run(
+/** A failure worth retrying — transient server / network hiccups, not real errors. */
+function isTransient(stderr: string): boolean {
+	return /\b(50[234])\b|timeout|timed out|temporarily unavailable|try again|too quickly|EAI_AGAIN|ECONNRESET|ETIMEDOUT|bad gateway|service unavailable/i.test(
+		stderr
+	);
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+function once(
 	file: string,
 	args: string[],
-	opts: { cwd?: string; timeoutMs?: number } = {}
+	opts: { cwd?: string; timeoutMs?: number }
 ): Promise<ShellResult> {
 	return new Promise((resolve) => {
 		execFile(
@@ -65,4 +69,24 @@ export function run(
 			}
 		);
 	});
+}
+
+/**
+ * Run an executable with arguments (no shell — args are passed directly, so no
+ * quoting/injection concerns). Never rejects: failures come back as a non-zero
+ * `code` with `stderr` populated. Set `retries` to auto-retry transient
+ * (5xx / network) failures — only for idempotent commands.
+ */
+export async function run(
+	file: string,
+	args: string[],
+	opts: { cwd?: string; timeoutMs?: number; retries?: number } = {}
+): Promise<ShellResult> {
+	const retries = opts.retries ?? 0;
+	let res = await once(file, args, opts);
+	for (let attempt = 0; attempt < retries && res.code !== 0 && isTransient(res.stderr); attempt++) {
+		await sleep(500 * (attempt + 1));
+		res = await once(file, args, opts);
+	}
+	return res;
 }

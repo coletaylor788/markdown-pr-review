@@ -54,7 +54,7 @@ export async function listPullRequests(
 	const search = opts.search?.trim();
 	if (search) args.push("--search", search);
 
-	const res = await run(ghPath, args, { cwd: repoRoot, timeoutMs: 30000 });
+	const res = await run(ghPath, args, { cwd: repoRoot, timeoutMs: 30000, retries: 2 });
 	if (res.code !== 0) {
 		throw new GhError(res.stderr.trim() || "gh pr list failed");
 	}
@@ -74,6 +74,7 @@ export async function currentUser(
 	const res = await run(ghPath, ["api", "user", "--jq", ".login"], {
 		cwd: repoRoot,
 		timeoutMs: 15000,
+		retries: 2,
 	});
 	return res.code === 0 ? res.stdout.trim() || null : null;
 }
@@ -86,6 +87,7 @@ export async function checkoutPullRequest(
 	const res = await run(ghPath, ["pr", "checkout", String(prNumber)], {
 		cwd: repoRoot,
 		timeoutMs: 60000,
+		retries: 2,
 	});
 	if (res.code !== 0) {
 		throw new GhError(res.stderr.trim() || `gh pr checkout ${prNumber} failed`);
@@ -101,7 +103,7 @@ export async function prHeadSha(
 	const res = await run(
 		ghPath,
 		["pr", "view", String(prNumber), "--json", "headRefOid", "--jq", ".headRefOid"],
-		{ cwd: repoRoot, timeoutMs: 20000 }
+		{ cwd: repoRoot, timeoutMs: 20000, retries: 2 }
 	);
 	return res.code === 0 ? res.stdout.trim() || null : null;
 }
@@ -114,6 +116,7 @@ export async function repoTarget(
 	const res = await run(ghPath, ["repo", "view", "--json", "nameWithOwner,url"], {
 		cwd: repoRoot,
 		timeoutMs: 20000,
+		retries: 2,
 	});
 	if (res.code !== 0) return null;
 	try {
@@ -151,7 +154,7 @@ export async function listReviewComments(
 			host,
 			`repos/${nameWithOwner}/pulls/${prNumber}/comments?per_page=100`,
 		],
-		{ timeoutMs: 30000 }
+		{ timeoutMs: 30000, retries: 2 }
 	);
 	if (res.code !== 0) {
 		throw new GhError(res.stderr.trim() || "gh api pulls/comments failed");
@@ -198,7 +201,7 @@ export async function listReviews(
 			host,
 			`repos/${nameWithOwner}/pulls/${prNumber}/reviews?per_page=100`,
 		],
-		{ timeoutMs: 30000 }
+		{ timeoutMs: 30000, retries: 2 }
 	);
 	if (res.code !== 0) {
 		throw new GhError(res.stderr.trim() || "gh api pulls/reviews (list) failed");
