@@ -170,3 +170,47 @@ export async function listReviewComments(
 		throw new GhError("Could not parse review comments: " + String(e));
 	}
 }
+
+export interface PrReview {
+	id: number;
+	login: string;
+	/** APPROVED | CHANGES_REQUESTED | COMMENTED | DISMISSED | PENDING */
+	state: string;
+	body: string;
+	submittedAt: string;
+}
+
+/** Overall review submissions on a PR (the summary + verdict per reviewer). */
+export async function listReviews(
+	ghPath: string,
+	host: string,
+	nameWithOwner: string,
+	prNumber: number
+): Promise<PrReview[]> {
+	const res = await run(
+		ghPath,
+		[
+			"api",
+			"--hostname",
+			host,
+			`repos/${nameWithOwner}/pulls/${prNumber}/reviews?per_page=100`,
+		],
+		{ timeoutMs: 30000 }
+	);
+	if (res.code !== 0) {
+		throw new GhError(res.stderr.trim() || "gh api pulls/reviews (list) failed");
+	}
+	try {
+		const arr = JSON.parse(res.stdout) as Array<Record<string, unknown>>;
+		if (!Array.isArray(arr)) return [];
+		return arr.map((r) => ({
+			id: Number(r.id),
+			login: ((r.user as { login?: string })?.login ?? "?") as string,
+			state: (r.state as string) ?? "",
+			body: (r.body as string) ?? "",
+			submittedAt: (r.submitted_at as string) ?? "",
+		}));
+	} catch (e) {
+		throw new GhError("Could not parse reviews: " + String(e));
+	}
+}

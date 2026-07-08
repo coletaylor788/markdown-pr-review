@@ -58,8 +58,10 @@ export class CommentPanelView extends ItemView {
 			return;
 		}
 
-		// Kick off (cached) fetch of others' PR comments.
+		// Kick off (cached) fetch of others' PR comments + reviews.
 		void this.plugin.loadOthersComments();
+
+		this.renderReviews(c);
 
 		const items = this.plugin.activeCommentItems();
 		if (items.length === 0) {
@@ -115,6 +117,28 @@ export class CommentPanelView extends ItemView {
 		);
 		this.iconButton(actions, "pencil", "Edit", () => this.plugin.editComment(id));
 		this.iconButton(actions, "trash-2", "Delete", () => void this.plugin.deleteComment(id));
+	}
+
+	private renderReviews(c: HTMLElement): void {
+		const reviews = this.plugin.prReviews();
+		if (reviews.length === 0) return;
+
+		c.createDiv({ cls: "mdpr-others-header", text: "PR reviews" });
+		const list = c.createDiv({ cls: "mdpr-comments-list" });
+		for (const r of reviews) {
+			const row = list.createDiv({ cls: "mdpr-comment-row mdpr-review-row" });
+			const head = row.createDiv({ cls: "mdpr-other-head" });
+			head.createSpan({ cls: "mdpr-other-author", text: r.login });
+			if (r.state) {
+				head.createSpan({
+					cls: `mdpr-review-state mdpr-state-${r.state.toLowerCase()}`,
+					text: prettyState(r.state),
+				});
+			}
+			if (r.body.trim()) {
+				row.createDiv({ cls: "mdpr-review-body", text: r.body });
+			}
+		}
 	}
 
 	private renderOthers(c: HTMLElement): void {
@@ -175,4 +199,19 @@ export class CommentPanelView extends ItemView {
 function truncate(s: string, n: number): string {
 	const flat = s.replace(/\s+/g, " ").trim();
 	return flat.length > n ? flat.slice(0, n) + "…" : flat;
+}
+
+function prettyState(state: string): string {
+	switch (state) {
+		case "APPROVED":
+			return "approved";
+		case "CHANGES_REQUESTED":
+			return "changes requested";
+		case "COMMENTED":
+			return "commented";
+		case "DISMISSED":
+			return "dismissed";
+		default:
+			return state.toLowerCase();
+	}
 }

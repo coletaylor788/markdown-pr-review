@@ -51,6 +51,8 @@ import {
 	repoTarget,
 	listReviewComments,
 	ReviewComment,
+	listReviews,
+	PrReview,
 } from "./github";
 import {
 	resolveDocComments,
@@ -120,6 +122,7 @@ export default class MdPrReviewPlugin extends Plugin {
 	private currentRepoRoot: string | null = null;
 	private activeFileKey: string | null = null;
 	private othersComments = new Map<string, ReviewComment[]>();
+	private reviewsByPr = new Map<string, PrReview[]>();
 	private othersLoading = new Set<string>();
 
 	async onload(): Promise<void> {
@@ -614,11 +617,21 @@ export default class MdPrReviewPlugin extends Plugin {
 		return !!key && this.othersLoading.has(key) && !this.othersComments.has(key);
 	}
 
+	prReviews(): PrReview[] {
+		const key = this.sessionKey();
+		return key ? this.reviewsByPr.get(key) ?? [] : [];
+	}
+
 	private hiddenAuthorPatterns(): string[] {
 		return this.settings.hideCommentsFrom
 			.split(",")
 			.map((p) => p.trim().toLowerCase())
 			.filter(Boolean);
+	}
+
+	private isHiddenAuthor(login: string): boolean {
+		const l = login.toLowerCase();
+		return this.hiddenAuthorPatterns().some((p) => l.includes(p));
 	}
 
 	async loadOthersComments(force = false): Promise<void> {
@@ -631,16 +644,24 @@ export default class MdPrReviewPlugin extends Plugin {
 		try {
 			const target = await repoTarget(this.settings.ghPath, s.repoRoot);
 			if (!target) return;
-			const all = await listReviewComments(
-				this.settings.ghPath,
-				target.host,
-				target.nameWithOwner,
-				s.prNumber
-			);
-			const patterns = this.hiddenAuthorPatterns();
+			const [comments, reviews] = await Promise.all([
+				listReviewComments(this.settings.ghPath, target.host, target.nameWithOwner, s.prNumber),
+				listReviews(this.settings.ghPath, target.host, target.nameWithOwner, s.prNumber),
+			]);
 			this.othersComments.set(
 				key,
-				all.filter((c) => !patterns.some((p) => c.login.toLowerCase().includes(p)))
+				comments.filter((c) => !this.isHiddenAuthor(c.login))
+			);
+			// Keep reviews that carry a message or a verdict (skip empty COMMENTED shells).
+			this.reviewsByPr.set(
+				key,
+				reviews.filter(
+					(r) =>
+						!this.isHiddenAuthor(r.login) &&
+						(r.body.trim() !== "" ||
+							r.state === "APPROVED" ||
+							r.state === "CHANGES_REQUESTED")
+				)
 			);
 		} catch (e) {
 			console.error("[markdown-pr-review] loadOthersComments", e);
