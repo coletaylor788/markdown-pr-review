@@ -81,8 +81,7 @@ import {
 import { ReviewSubmitModal } from "./reviewSubmitModal";
 import { ConfirmModal } from "./confirmModal";
 import { isHiddenPath } from "./fileTree";
-import { PR_QUEUE_VIEW_TYPE, PrQueueView } from "./prQueueView";
-import { COMMENT_PANEL_VIEW_TYPE, CommentPanelView } from "./commentPanel";
+import { PR_REVIEW_VIEW_TYPE, PrReviewView } from "./reviewView";
 import {
 	commentExtension,
 	setComments,
@@ -154,33 +153,20 @@ export default class MdPrReviewPlugin extends Plugin {
 		setLineBackground(this.settings.highlightLineBackground);
 
 		this.registerEditorExtension([diffExtension, commentExtension]);
-		this.registerView(PR_QUEUE_VIEW_TYPE, (leaf) => new PrQueueView(leaf, this));
-		this.registerView(
-			COMMENT_PANEL_VIEW_TYPE,
-			(leaf) => new CommentPanelView(leaf, this)
-		);
+		this.registerView(PR_REVIEW_VIEW_TYPE, (leaf) => new PrReviewView(leaf, this));
 		this.addSettingTab(new MdPrReviewSettingTab(this.app, this));
 
-		this.addRibbonIcon("git-pull-request", "Open PR review queue", () => {
+		this.addRibbonIcon("git-pull-request", "Open PR review", () => {
 			void this.activateQueueView();
 		});
 		this.addRibbonIcon("git-compare", "Toggle PR diff highlight", () => {
 			void this.toggleDiffGlobal();
 		});
-		this.addRibbonIcon("message-square", "Open PR comments panel", () => {
-			void this.activateView(COMMENT_PANEL_VIEW_TYPE);
-		});
 
 		this.addCommand({
-			id: "open-pr-queue",
-			name: "Open PR review queue",
+			id: "open-pr-review",
+			name: "Open PR review",
 			callback: () => void this.activateQueueView(),
-		});
-
-		this.addCommand({
-			id: "open-comments-panel",
-			name: "Open PR comments panel",
-			callback: () => void this.activateView(COMMENT_PANEL_VIEW_TYPE),
 		});
 
 		this.addCommand({
@@ -328,7 +314,7 @@ export default class MdPrReviewPlugin extends Plugin {
 	/* --------------------------------------------------------------------- */
 
 	async activateQueueView(): Promise<void> {
-		await this.activateView(PR_QUEUE_VIEW_TYPE);
+		await this.activateView(PR_REVIEW_VIEW_TYPE);
 	}
 
 	async activateView(viewType: string): Promise<void> {
@@ -581,8 +567,8 @@ export default class MdPrReviewPlugin extends Plugin {
 	}
 
 	refreshQueueView(): void {
-		this.app.workspace.getLeavesOfType(PR_QUEUE_VIEW_TYPE).forEach((leaf) => {
-			if (leaf.view instanceof PrQueueView) leaf.view.render();
+		this.app.workspace.getLeavesOfType(PR_REVIEW_VIEW_TYPE).forEach((leaf) => {
+			if (leaf.view instanceof PrReviewView) leaf.view.render();
 		});
 	}
 
@@ -799,9 +785,9 @@ export default class MdPrReviewPlugin extends Plugin {
 
 	revealOtherComment(id: string): void {
 		this.app.workspace
-			.getLeavesOfType(COMMENT_PANEL_VIEW_TYPE)
+			.getLeavesOfType(PR_REVIEW_VIEW_TYPE)
 			.forEach((leaf) => {
-				if (leaf.view instanceof CommentPanelView) {
+				if (leaf.view instanceof PrReviewView) {
 					this.app.workspace.revealLeaf(leaf);
 					leaf.view.revealOther(id);
 				}
@@ -910,26 +896,26 @@ export default class MdPrReviewPlugin extends Plugin {
 
 	private refreshCommentPanel(): void {
 		this.app.workspace
-			.getLeavesOfType(COMMENT_PANEL_VIEW_TYPE)
+			.getLeavesOfType(PR_REVIEW_VIEW_TYPE)
 			.forEach((leaf) => {
-				if (leaf.view instanceof CommentPanelView) leaf.view.render();
+				if (leaf.view instanceof PrReviewView) leaf.view.render();
 			});
 	}
 
 	/** Reveal a comment in the panel (driven by clicking its line in the editor). */
 	async revealComment(id: string): Promise<void> {
 		let leaf: WorkspaceLeaf | null =
-			this.app.workspace.getLeavesOfType(COMMENT_PANEL_VIEW_TYPE)[0] ?? null;
+			this.app.workspace.getLeavesOfType(PR_REVIEW_VIEW_TYPE)[0] ?? null;
 		if (!leaf) {
 			const right = this.app.workspace.getRightLeaf(false);
 			if (right) {
-				await right.setViewState({ type: COMMENT_PANEL_VIEW_TYPE, active: false });
+				await right.setViewState({ type: PR_REVIEW_VIEW_TYPE, active: false });
 				leaf = right;
 			}
 		}
 		if (!leaf) return;
 		this.app.workspace.revealLeaf(leaf);
-		if (leaf.view instanceof CommentPanelView) leaf.view.highlight(id);
+		if (leaf.view instanceof PrReviewView) leaf.view.highlight(id);
 	}
 
 	private async saveActiveSidecar(): Promise<void> {

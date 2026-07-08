@@ -1496,7 +1496,7 @@ __export(main_exports, {
   default: () => MdPrReviewPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian7 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 var path4 = __toESM(require("path"), 1);
 var import_fs4 = require("fs");
 
@@ -2924,10 +2924,10 @@ function sortNodes(nodes) {
   for (const n of nodes) if (n.children.length) sortNodes(n.children);
 }
 
-// src/prQueueView.ts
+// src/reviewView.ts
 var import_obsidian4 = require("obsidian");
-var PR_QUEUE_VIEW_TYPE = "mdpr-pr-queue";
-var PrQueueView = class extends import_obsidian4.ItemView {
+var PR_REVIEW_VIEW_TYPE = "mdpr-review";
+var PrReviewView = class extends import_obsidian4.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.repos = [];
@@ -2937,16 +2937,17 @@ var PrQueueView = class extends import_obsidian4.ItemView {
     this.errorMsg = "";
     this.myLogin = null;
     this.myLoginResolved = false;
-    this.bodyEl = null;
-    this.treeCollapsed = /* @__PURE__ */ new Set();
+    this.collapsed = /* @__PURE__ */ new Set();
+    this.listEl = null;
+    this.lastSessionPr = null;
     this.plugin = plugin;
     this.authorFilter = plugin.settings.defaultAuthorFilter;
   }
   getViewType() {
-    return PR_QUEUE_VIEW_TYPE;
+    return PR_REVIEW_VIEW_TYPE;
   }
   getDisplayText() {
-    return "PR review queue";
+    return "PR review";
   }
   getIcon() {
     return "git-pull-request";
@@ -2954,6 +2955,7 @@ var PrQueueView = class extends import_obsidian4.ItemView {
   async onOpen() {
     this.render();
     await this.refresh();
+    void this.plugin.refreshPrLocal();
   }
   async onClose() {
   }
@@ -2988,6 +2990,47 @@ var PrQueueView = class extends import_obsidian4.ItemView {
       this.render();
     }
   }
+  render() {
+    const c = this.contentEl;
+    c.empty();
+    c.addClass("mdpr-review");
+    const session = this.plugin.session;
+    if (session && session.prNumber !== this.lastSessionPr) {
+      this.collapsed.add("prlist");
+      this.lastSessionPr = session.prNumber;
+    }
+    if (!session) this.lastSessionPr = null;
+    this.renderPrList(c);
+    if (session) {
+      this.renderSessionBar(c);
+      this.renderFiles(c);
+      this.renderCommentsArea(c);
+    }
+  }
+  /* ------------------------------------------------------------------ */
+  /* Collapsible helper                                                  */
+  /* ------------------------------------------------------------------ */
+  collapsible(parent, key, buildHeader, cls = "mdpr-section") {
+    const collapsed = this.collapsed.has(key);
+    const sec = parent.createDiv({ cls });
+    const head = sec.createDiv({ cls: "mdpr-section-header" });
+    const chev = head.createSpan({ cls: "mdpr-section-chev" });
+    (0, import_obsidian4.setIcon)(chev, collapsed ? "chevron-right" : "chevron-down");
+    buildHeader(head);
+    head.onclick = () => {
+      if (collapsed) this.collapsed.delete(key);
+      else this.collapsed.add(key);
+      this.render();
+    };
+    return collapsed ? null : sec.createDiv({ cls: "mdpr-section-body" });
+  }
+  sectionTitle(h, title, count) {
+    h.createSpan({ cls: "mdpr-section-title", text: title });
+    h.createSpan({ cls: "mdpr-section-count", text: String(count) });
+  }
+  /* ------------------------------------------------------------------ */
+  /* PR list (collapsible)                                               */
+  /* ------------------------------------------------------------------ */
   matchesAuthor(pr, needle) {
     const login = (pr.author?.login ?? "").toLowerCase();
     const name = (pr.author?.name ?? "").toLowerCase();
@@ -3003,50 +3046,29 @@ var PrQueueView = class extends import_obsidian4.ItemView {
     if (needle) list = list.filter((pr) => this.matchesAuthor(pr, needle));
     return list;
   }
-  render() {
-    const c = this.contentEl;
-    c.empty();
-    c.addClass("mdpr-queue");
-    this.renderFilters(c);
-    this.renderSessionBar(c);
-    this.renderFileTree(c);
-    this.bodyEl = c.createDiv({ cls: "mdpr-queue-body" });
-    this.renderBody();
-  }
-  /** Re-render only the list/status area, so filter inputs keep focus. */
-  renderBody() {
-    const c = this.bodyEl;
-    if (!c) return;
-    c.empty();
-    if (this.loading) {
-      c.createDiv({ cls: "mdpr-queue-status", text: "Loading pull requests\u2026" });
-      return;
-    }
-    if (this.errorMsg) {
-      c.createDiv({ cls: "mdpr-queue-status mdpr-error", text: this.errorMsg });
-      c.createDiv({
-        cls: "mdpr-queue-status",
-        text: "The queue needs a repo with a GitHub remote that `gh` is authed for. A local-only repo (no remote) has no PRs to list."
+  renderPrList(c) {
+    const session = this.plugin.session;
+    const body = this.collapsible(c, "prlist", (h) => {
+      h.createSpan({
+        cls: "mdpr-section-title",
+        text: session ? `Pull requests \xB7 #${session.prNumber}` : "Pull requests"
       });
-      return;
-    }
-    const visible = this.visiblePrs();
-    if (visible.length === 0) {
-      c.createDiv({ cls: "mdpr-queue-status", text: "No open pull requests match." });
-      return;
-    }
-    this.renderList(c, visible);
-  }
-  renderFilters(c) {
-    const header = c.createDiv({ cls: "mdpr-queue-header" });
-    const top = header.createDiv({ cls: "mdpr-queue-title-row" });
-    top.createSpan({ text: "PR review queue", cls: "mdpr-queue-title" });
-    const refreshBtn = top.createEl("button", {
-      cls: "mdpr-icon-btn",
-      attr: { "aria-label": "Refresh" }
+      const refresh = h.createEl("button", {
+        cls: "mdpr-icon-btn",
+        attr: { "aria-label": "Refresh" }
+      });
+      (0, import_obsidian4.setIcon)(refresh, "refresh-cw");
+      refresh.onclick = (e) => {
+        e.stopPropagation();
+        void this.refresh();
+      };
     });
-    (0, import_obsidian4.setIcon)(refreshBtn, "refresh-cw");
-    refreshBtn.onclick = () => void this.refresh();
+    if (!body) return;
+    this.renderFilters(body);
+    this.listEl = body.createDiv();
+    this.renderListBody();
+  }
+  renderFilters(header) {
     const repoRow = header.createDiv({ cls: "mdpr-repo-row" });
     repoRow.createSpan({ cls: "mdpr-repo-label", text: "Repo" });
     const select = repoRow.createEl("select", { cls: "mdpr-select" });
@@ -3073,7 +3095,7 @@ var PrQueueView = class extends import_obsidian4.ItemView {
     authorInput.value = this.authorFilter;
     authorInput.oninput = () => {
       this.authorFilter = authorInput.value;
-      this.renderBody();
+      this.renderListBody();
     };
     const searchInput = header.createEl("input", {
       cls: "mdpr-input",
@@ -3090,26 +3112,72 @@ var PrQueueView = class extends import_obsidian4.ItemView {
     cb.onchange = async () => {
       this.plugin.settings.markdownOnlyQueue = cb.checked;
       await this.plugin.saveSettings();
-      this.renderBody();
+      this.renderListBody();
     };
     toggleRow.createSpan({ text: "Markdown changes only" });
   }
+  renderListBody() {
+    const c = this.listEl;
+    if (!c) return;
+    c.empty();
+    if (this.loading) {
+      c.createDiv({ cls: "mdpr-queue-status", text: "Loading pull requests\u2026" });
+      return;
+    }
+    if (this.errorMsg) {
+      c.createDiv({ cls: "mdpr-queue-status mdpr-error", text: this.errorMsg });
+      c.createDiv({
+        cls: "mdpr-queue-status",
+        text: "The queue needs a repo with a GitHub remote that `gh` is authed for."
+      });
+      return;
+    }
+    const visible = this.visiblePrs();
+    if (visible.length === 0) {
+      c.createDiv({ cls: "mdpr-queue-status", text: "No open pull requests match." });
+      return;
+    }
+    const list = c.createDiv({ cls: "mdpr-queue-list" });
+    const activeNum = this.plugin.session?.prNumber;
+    for (const pr of visible) {
+      const row = list.createDiv({ cls: "mdpr-pr-row" });
+      if (pr.number === activeNum) row.addClass("mdpr-active");
+      if (this.plugin.isReviewed(pr.number)) row.addClass("mdpr-reviewed");
+      const main = row.createDiv({ cls: "mdpr-pr-main" });
+      main.createSpan({ cls: "mdpr-pr-number", text: `#${pr.number}` });
+      main.createSpan({ cls: "mdpr-pr-title", text: pr.title });
+      const meta = row.createDiv({ cls: "mdpr-pr-meta" });
+      meta.createSpan({ cls: "mdpr-pr-author", text: pr.author?.login ?? "?" });
+      meta.createSpan({ cls: "mdpr-pr-badge", text: `${markdownFiles(pr).length} md` });
+      if (this.plugin.isReviewed(pr.number)) {
+        const check = meta.createSpan({ cls: "mdpr-pr-check" });
+        (0, import_obsidian4.setIcon)(check, "check");
+      }
+      row.onclick = () => void this.plugin.openPullRequest(pr);
+    }
+  }
+  /* ------------------------------------------------------------------ */
+  /* Session bar + file tree                                             */
+  /* ------------------------------------------------------------------ */
   renderSessionBar(c) {
     const session = this.plugin.session;
     if (!session) return;
-    const bar = c.createDiv({ cls: "mdpr-session" });
     const n = session.mdFiles.length;
-    bar.createDiv({ cls: "mdpr-session-row" }).createSpan({
+    c.createDiv({ cls: "mdpr-session" }).createDiv({ cls: "mdpr-session-row" }).createSpan({
       cls: "mdpr-session-label",
       text: `PR #${session.prNumber} \xB7 ${n} file${n === 1 ? "" : "s"}`
     });
   }
-  renderFileTree(c) {
+  renderFiles(c) {
     const s = this.plugin.session;
     if (!s || s.mdFiles.length === 0) return;
-    const wrap = c.createDiv({ cls: "mdpr-filetree" });
-    const nodes = buildFileTree(s.mdFiles);
-    this.renderTreeNodes(wrap, nodes, 0, "", s.mdFiles[s.fileIndex]);
+    const body = this.collapsible(
+      c,
+      "files",
+      (h) => this.sectionTitle(h, "Files", s.mdFiles.length)
+    );
+    if (!body) return;
+    this.renderTreeNodes(body, buildFileTree(s.mdFiles), 0, "", s.mdFiles[s.fileIndex]);
   }
   renderTreeNodes(parent, nodes, depth, prefix, current) {
     for (const node of nodes) {
@@ -3130,7 +3198,6 @@ var PrQueueView = class extends import_obsidian4.ItemView {
         row.createSpan({ cls: "mdpr-tree-name", text: node.name });
         if (hidden) {
           const folder = p.split("/").find((s) => s.startsWith("."));
-          row.setAttr("aria-label", `In hidden folder "${folder}/" \u2014 review on GitHub`);
           row.onclick = () => new import_obsidian4.Notice(
             `${node.name} is in a hidden folder ("${folder}/"). Obsidian can't open it \u2014 review it on GitHub.`
           );
@@ -3139,15 +3206,15 @@ var PrQueueView = class extends import_obsidian4.ItemView {
         }
       } else {
         const folderPath = `${prefix}${node.name}/`;
-        const collapsed = this.treeCollapsed.has(folderPath);
+        const collapsed = this.collapsed.has(`tree:${folderPath}`);
         const row = parent.createDiv({ cls: "mdpr-tree-row mdpr-tree-folder" });
         row.style.paddingLeft = `${indent}px`;
         const icon = row.createSpan({ cls: "mdpr-tree-icon" });
         (0, import_obsidian4.setIcon)(icon, collapsed ? "chevron-right" : "chevron-down");
         row.createSpan({ cls: "mdpr-tree-name", text: node.name });
         row.onclick = () => {
-          if (collapsed) this.treeCollapsed.delete(folderPath);
-          else this.treeCollapsed.add(folderPath);
+          if (collapsed) this.collapsed.delete(`tree:${folderPath}`);
+          else this.collapsed.add(`tree:${folderPath}`);
           this.render();
         };
         if (!collapsed) {
@@ -3156,99 +3223,36 @@ var PrQueueView = class extends import_obsidian4.ItemView {
       }
     }
   }
-  renderList(c, visible) {
-    const list = c.createDiv({ cls: "mdpr-queue-list" });
-    const activeNum = this.plugin.session?.prNumber;
-    for (const pr of visible) {
-      const row = list.createDiv({ cls: "mdpr-pr-row" });
-      if (pr.number === activeNum) row.addClass("mdpr-active");
-      if (this.plugin.isReviewed(pr.number)) row.addClass("mdpr-reviewed");
-      const main = row.createDiv({ cls: "mdpr-pr-main" });
-      main.createSpan({ cls: "mdpr-pr-number", text: `#${pr.number}` });
-      main.createSpan({ cls: "mdpr-pr-title", text: pr.title });
-      const meta = row.createDiv({ cls: "mdpr-pr-meta" });
-      meta.createSpan({ cls: "mdpr-pr-author", text: pr.author?.login ?? "?" });
-      const mdCount = markdownFiles(pr).length;
-      meta.createSpan({ cls: "mdpr-pr-badge", text: `${mdCount} md` });
-      if (this.plugin.isReviewed(pr.number)) {
-        const check = meta.createSpan({
-          cls: "mdpr-pr-check",
-          attr: { "aria-label": "Reviewed" }
-        });
-        (0, import_obsidian4.setIcon)(check, "check");
-      }
-      row.onclick = () => void this.plugin.openPullRequest(pr);
-    }
-  }
-};
-
-// src/commentPanel.ts
-var import_obsidian5 = require("obsidian");
-var COMMENT_PANEL_VIEW_TYPE = "mdpr-comments";
-var CommentPanelView = class extends import_obsidian5.ItemView {
-  constructor(leaf, plugin) {
-    super(leaf);
-    this.collapsed = /* @__PURE__ */ new Set();
-    this.plugin = plugin;
-  }
-  getViewType() {
-    return COMMENT_PANEL_VIEW_TYPE;
-  }
-  getDisplayText() {
-    return "PR comments";
-  }
-  getIcon() {
-    return "message-square";
-  }
-  async onOpen() {
-    this.render();
-    void this.plugin.refreshPrLocal();
-  }
-  async onClose() {
-  }
-  render() {
-    const c = this.contentEl;
-    c.empty();
-    c.addClass("mdpr-comments");
-    const header = c.createDiv({ cls: "mdpr-comments-header" });
-    header.createSpan({ cls: "mdpr-queue-title", text: "PR comments" });
-    const actions = header.createDiv({ cls: "mdpr-header-actions" });
+  /* ------------------------------------------------------------------ */
+  /* Comments area                                                       */
+  /* ------------------------------------------------------------------ */
+  renderCommentsArea(c) {
+    const toolbar = c.createDiv({ cls: "mdpr-comments-toolbar" });
+    toolbar.createSpan({ cls: "mdpr-section-title", text: "Comments" });
+    const actions = toolbar.createDiv({ cls: "mdpr-header-actions" });
     const addBtn = actions.createEl("button", {
       cls: "mdpr-icon-btn",
       attr: { "aria-label": "Add comment from selection" }
     });
-    (0, import_obsidian5.setIcon)(addBtn, "message-square-plus");
+    (0, import_obsidian4.setIcon)(addBtn, "message-square-plus");
     addBtn.onclick = () => void this.plugin.addCommentFromSelection();
-    if (this.plugin.session) {
-      const postBtn = actions.createEl("button", {
-        cls: "mdpr-icon-btn",
-        attr: { "aria-label": `Post review to PR #${this.plugin.session.prNumber}` }
-      });
-      (0, import_obsidian5.setIcon)(postBtn, "send");
-      postBtn.onclick = () => void this.plugin.postReviewToGitHub();
-    }
-    const session = this.plugin.session;
-    if (!session && !this.plugin.activeDoc) {
-      c.createDiv({
-        cls: "mdpr-queue-status",
-        text: "Open a PR from the queue, or a markdown file in a git repo."
-      });
-      return;
-    }
+    const postBtn = actions.createEl("button", {
+      cls: "mdpr-icon-btn",
+      attr: { "aria-label": "Post review to GitHub" }
+    });
+    (0, import_obsidian4.setIcon)(postBtn, "send");
+    postBtn.onclick = () => void this.plugin.postReviewToGitHub();
     void this.plugin.loadOthersComments();
-    const reviews = session ? this.plugin.prReviews() : [];
-    const others = session ? this.plugin.othersAll() : [];
+    const reviews = this.plugin.prReviews();
+    const others = this.plugin.othersAll();
     const loading = this.plugin.othersLoadingNow();
-    const unposted = this.mergeUnposted(
-      session ? this.plugin.prUnposted() : [],
-      this.activeDocUnposted()
-    );
+    const unposted = this.mergeUnposted(this.plugin.prUnposted(), this.activeDocUnposted());
     this.renderReviewsWithComments(c, reviews, others, loading);
     this.renderUnposted(c, unposted);
     if (reviews.length === 0 && unposted.length === 0 && others.length === 0 && !loading) {
       c.createDiv({
         cls: "mdpr-queue-status",
-        text: "No comments yet. Select text in the editor and add one."
+        text: "No comments yet. Select text in a file and add one."
       });
     }
   }
@@ -3260,25 +3264,6 @@ var CommentPanelView = class extends import_obsidian5.ItemView {
   mergeUnposted(a, b) {
     const seen = new Set(a.map((x) => x.comment.id));
     return [...a, ...b.filter((x) => !seen.has(x.comment.id))];
-  }
-  /** A collapsible section; returns the body element, or null when collapsed. */
-  collapsible(parent, key, buildHeader, cls = "mdpr-section") {
-    const collapsed = this.collapsed.has(key);
-    const sec = parent.createDiv({ cls });
-    const head = sec.createDiv({ cls: "mdpr-section-header" });
-    const chev = head.createSpan({ cls: "mdpr-section-chev" });
-    (0, import_obsidian5.setIcon)(chev, collapsed ? "chevron-right" : "chevron-down");
-    buildHeader(head);
-    head.onclick = () => {
-      if (collapsed) this.collapsed.delete(key);
-      else this.collapsed.add(key);
-      this.render();
-    };
-    return collapsed ? null : sec.createDiv({ cls: "mdpr-section-body" });
-  }
-  sectionTitle(h, title, count) {
-    h.createSpan({ cls: "mdpr-section-title", text: title });
-    h.createSpan({ cls: "mdpr-section-count", text: String(count) });
   }
   renderReviewsWithComments(c, reviews, others, loading) {
     const reviewIds = new Set(reviews.map((r) => r.id));
@@ -3347,22 +3332,18 @@ var CommentPanelView = class extends import_obsidian5.ItemView {
       attr: { "data-mdpr-other-row": String(rc.id) }
     });
     const head = row.createDiv({ cls: "mdpr-other-head" });
-    head.createSpan({
-      cls: "mdpr-file-label",
-      text: fileBase(rc.path),
-      attr: { "aria-label": rc.path }
-    });
+    head.createSpan({ cls: "mdpr-file-label", text: fileBase(rc.path), attr: { "aria-label": rc.path } });
     if (rc.line) head.createSpan({ cls: "mdpr-other-line", text: `L${rc.line}` });
     row.createDiv({ cls: "mdpr-comment-body", text: rc.body });
     if (rc.line != null) {
       const act = row.createDiv({ cls: "mdpr-comment-actions" });
       const line = rc.line;
-      const path5 = rc.path;
+      const p = rc.path;
       this.iconButton(
         act,
         "crosshair",
         "Open file at line",
-        () => void this.plugin.openFileAndJumpLine(path5, line)
+        () => void this.plugin.openFileAndJumpLine(p, line)
       );
     }
   }
@@ -3385,11 +3366,7 @@ var CommentPanelView = class extends import_obsidian5.ItemView {
         body,
         `unposted:${relPath}`,
         (h) => {
-          h.createSpan({
-            cls: "mdpr-file-label",
-            text: fileBase(relPath),
-            attr: { "aria-label": relPath }
-          });
+          h.createSpan({ cls: "mdpr-file-label", text: fileBase(relPath), attr: { "aria-label": relPath } });
           h.createSpan({ cls: "mdpr-section-count", text: String(list.length) });
         },
         "mdpr-subsection"
@@ -3436,7 +3413,9 @@ var CommentPanelView = class extends import_obsidian5.ItemView {
       () => void this.plugin.deleteCommentAt(relPath, id)
     );
   }
-  /** Flash a local comment (editor-click reveal); expands its file group. */
+  /* ------------------------------------------------------------------ */
+  /* Editor-click reveals                                                */
+  /* ------------------------------------------------------------------ */
   highlight(id) {
     const relPath = this.plugin.activeDoc?.relPath;
     this.collapsed.delete("unposted");
@@ -3444,7 +3423,6 @@ var CommentPanelView = class extends import_obsidian5.ItemView {
     this.render();
     this.flash(`.mdpr-comment-row[data-mdpr-row="${id}"]`);
   }
-  /** Expand the review holding another reviewer's comment and flash it. */
   revealOther(id) {
     const rc = this.plugin.othersAll().find((c) => String(c.id) === id);
     if (!rc) return;
@@ -3463,11 +3441,8 @@ var CommentPanelView = class extends import_obsidian5.ItemView {
     row.scrollIntoView({ block: "center", behavior: "smooth" });
   }
   iconButton(parent, icon, label, onClick) {
-    const b = parent.createEl("button", {
-      cls: "mdpr-icon-btn",
-      attr: { "aria-label": label }
-    });
-    (0, import_obsidian5.setIcon)(b, icon);
+    const b = parent.createEl("button", { cls: "mdpr-icon-btn", attr: { "aria-label": label } });
+    (0, import_obsidian4.setIcon)(b, icon);
     b.onclick = onClick;
   }
 };
@@ -3475,8 +3450,8 @@ function truncate2(s, n) {
   const flat = s.replace(/\s+/g, " ").trim();
   return flat.length > n ? flat.slice(0, n) + "\u2026" : flat;
 }
-function fileBase(path5) {
-  return path5.split("/").pop() ?? path5;
+function fileBase(p) {
+  return p.split("/").pop() ?? p;
 }
 function prettyState(state) {
   switch (state) {
@@ -3626,8 +3601,8 @@ async function saveSidecar(repoRoot, sidecarDir, relPath, sc) {
 }
 
 // src/commentModal.ts
-var import_obsidian6 = require("obsidian");
-var CommentModal = class extends import_obsidian6.Modal {
+var import_obsidian5 = require("obsidian");
+var CommentModal = class extends import_obsidian5.Modal {
   constructor(app, opts) {
     super(app);
     this.value = opts.initial ?? "";
@@ -3644,14 +3619,14 @@ var CommentModal = class extends import_obsidian6.Modal {
       });
     }
     let area = null;
-    new import_obsidian6.Setting(contentEl).setName("Comment").addTextArea((t) => {
+    new import_obsidian5.Setting(contentEl).setName("Comment").addTextArea((t) => {
       area = t;
       t.setValue(this.value);
       t.onChange((v) => this.value = v);
       t.inputEl.rows = 5;
       t.inputEl.addClass("mdpr-modal-textarea");
     });
-    new import_obsidian6.Setting(contentEl).addButton(
+    new import_obsidian5.Setting(contentEl).addButton(
       (b) => b.setButtonText("Cancel").onClick(() => {
         this.onSubmit(null);
         this.close();
@@ -3694,7 +3669,7 @@ function changedLineSet2(doc, result) {
   for (const offset of result.deletions) set.add(doc.lineAt(clampN(offset)).number);
   return set;
 }
-var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
+var MdPrReviewPlugin = class extends import_obsidian6.Plugin {
   constructor() {
     super(...arguments);
     this.session = null;
@@ -3713,36 +3688,24 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
     await this.loadPersisted();
     setLineBackground(this.settings.highlightLineBackground);
     this.registerEditorExtension([diffExtension, commentExtension]);
-    this.registerView(PR_QUEUE_VIEW_TYPE, (leaf) => new PrQueueView(leaf, this));
-    this.registerView(
-      COMMENT_PANEL_VIEW_TYPE,
-      (leaf) => new CommentPanelView(leaf, this)
-    );
+    this.registerView(PR_REVIEW_VIEW_TYPE, (leaf) => new PrReviewView(leaf, this));
     this.addSettingTab(new MdPrReviewSettingTab(this.app, this));
-    this.addRibbonIcon("git-pull-request", "Open PR review queue", () => {
+    this.addRibbonIcon("git-pull-request", "Open PR review", () => {
       void this.activateQueueView();
     });
     this.addRibbonIcon("git-compare", "Toggle PR diff highlight", () => {
       void this.toggleDiffGlobal();
     });
-    this.addRibbonIcon("message-square", "Open PR comments panel", () => {
-      void this.activateView(COMMENT_PANEL_VIEW_TYPE);
-    });
     this.addCommand({
-      id: "open-pr-queue",
-      name: "Open PR review queue",
+      id: "open-pr-review",
+      name: "Open PR review",
       callback: () => void this.activateQueueView()
-    });
-    this.addCommand({
-      id: "open-comments-panel",
-      name: "Open PR comments panel",
-      callback: () => void this.activateView(COMMENT_PANEL_VIEW_TYPE)
     });
     this.addCommand({
       id: "add-comment",
       name: "Add comment from selection",
       checkCallback: (checking) => {
-        const view = this.app.workspace.getActiveViewOfType(import_obsidian7.MarkdownView);
+        const view = this.app.workspace.getActiveViewOfType(import_obsidian6.MarkdownView);
         if (!view || view.file == null) return false;
         if (!checking) void this.addCommentFromSelection();
         return true;
@@ -3803,16 +3766,16 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
   }
   absPathOf(file) {
     const adapter = this.app.vault.adapter;
-    return adapter instanceof import_obsidian7.FileSystemAdapter ? path4.join(adapter.getBasePath(), file.path) : null;
+    return adapter instanceof import_obsidian6.FileSystemAdapter ? path4.join(adapter.getBasePath(), file.path) : null;
   }
   /** Flip the global diff-highlight state and apply it to every open editor. */
   async toggleDiffGlobal() {
     this.settings.diffEnabled = !this.settings.diffEnabled;
     await this.saveSettings();
-    new import_obsidian7.Notice(this.settings.diffEnabled ? "PR diff highlight on" : "PR diff highlight off");
+    new import_obsidian6.Notice(this.settings.diffEnabled ? "PR diff highlight on" : "PR diff highlight off");
     for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
       const view = leaf.view;
-      if (view instanceof import_obsidian7.MarkdownView) await this.applyDiffToView(view);
+      if (view instanceof import_obsidian6.MarkdownView) await this.applyDiffToView(view);
     }
   }
   /** Apply the current global diff state to a view — silently (no per-file notices). */
@@ -3842,7 +3805,7 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
       enableDiff(cm, base.baseText);
     } catch (e) {
       if (!opts.silent) {
-        new import_obsidian7.Notice(`PR diff failed: ${e instanceof GitError ? e.message : String(e)}`);
+        new import_obsidian6.Notice(`PR diff failed: ${e instanceof GitError ? e.message : String(e)}`);
       }
       console.error("[markdown-pr-review] enableDiffForView", e);
     }
@@ -3851,7 +3814,7 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
     setLineBackground(this.settings.highlightLineBackground);
     this.app.workspace.getLeavesOfType("markdown").forEach((leaf) => {
       const view = leaf.view;
-      if (view instanceof import_obsidian7.MarkdownView) {
+      if (view instanceof import_obsidian6.MarkdownView) {
         const cm = this.cmOf(view);
         if (cm) retriggerDiff(cm);
       }
@@ -3861,7 +3824,7 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
   /* PR queue                                                               */
   /* --------------------------------------------------------------------- */
   async activateQueueView() {
-    await this.activateView(PR_QUEUE_VIEW_TYPE);
+    await this.activateView(PR_REVIEW_VIEW_TYPE);
   }
   async activateView(viewType) {
     const { workspace } = this.app;
@@ -3878,7 +3841,7 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
    */
   async discoverRepos() {
     const adapter = this.app.vault.adapter;
-    if (!(adapter instanceof import_obsidian7.FileSystemAdapter)) return [];
+    if (!(adapter instanceof import_obsidian6.FileSystemAdapter)) return [];
     const base = adapter.getBasePath();
     const out = [];
     const seen = /* @__PURE__ */ new Set();
@@ -3923,7 +3886,7 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
   async openPullRequest(pr) {
     const repo = this.selectedRepo;
     if (!repo) {
-      new import_obsidian7.Notice("Attach a repository in the PR queue first.");
+      new import_obsidian6.Notice("Attach a repository in the PR queue first.");
       return;
     }
     try {
@@ -3957,18 +3920,18 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
           `markdown-pr-review: before PR #${pr.number}`
         );
         if (!stashed) {
-          new import_obsidian7.Notice("Stash failed \u2014 not switching.");
+          new import_obsidian6.Notice("Stash failed \u2014 not switching.");
           return;
         }
       }
     } catch (e) {
       console.error("[markdown-pr-review] dirty check", e);
     }
-    new import_obsidian7.Notice(`Checking out PR #${pr.number}\u2026`);
+    new import_obsidian6.Notice(`Checking out PR #${pr.number}\u2026`);
     try {
       await checkoutPullRequest(this.settings.ghPath, repo.repoRoot, pr.number);
     } catch (e) {
-      new import_obsidian7.Notice(`Checkout failed: ${e.message}`);
+      new import_obsidian6.Notice(`Checkout failed: ${e.message}`);
       return;
     }
     this.currentRepoRoot = repo.repoRoot;
@@ -3987,7 +3950,7 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
     void this.loadOthersComments();
     void this.refreshPrLocal();
     if (this.session.mdFiles.length === 0) {
-      new import_obsidian7.Notice(`PR #${pr.number} changes no markdown files.`);
+      new import_obsidian6.Notice(`PR #${pr.number} changes no markdown files.`);
       return;
     }
     await this.openSessionFile(0);
@@ -3997,7 +3960,7 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
     if (!s) return;
     const next = s.fileIndex + delta;
     if (next < 0 || next >= s.mdFiles.length) {
-      new import_obsidian7.Notice("No more files in this PR.");
+      new import_obsidian6.Notice("No more files in this PR.");
       return;
     }
     await this.openSessionFile(next);
@@ -4032,7 +3995,7 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
     const file = await this.findVaultFile(s.repoRoot, s.vaultMount, relPath);
     if (!file) {
       const hidden = relPath.split("/").find((seg) => seg.startsWith("."));
-      new import_obsidian7.Notice(
+      new import_obsidian6.Notice(
         hidden ? `Obsidian doesn't index hidden folders, so ${relPath} can't be opened (folder "${hidden}/").` : `Could not find ${relPath} in the vault.`
       );
       return;
@@ -4040,7 +4003,7 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
     const leaf = this.app.workspace.getLeaf(false);
     await leaf.openFile(file);
     const view = leaf.view;
-    if (view instanceof import_obsidian7.MarkdownView) {
+    if (view instanceof import_obsidian6.MarkdownView) {
       await this.applyDiffToView(view);
     }
   }
@@ -4067,7 +4030,7 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
   async getFileWithRetry(vaultRel, tries = 6) {
     for (let i = 0; i < tries; i++) {
       const f = this.app.vault.getAbstractFileByPath(vaultRel);
-      if (f instanceof import_obsidian7.TFile) return f;
+      if (f instanceof import_obsidian6.TFile) return f;
       await sleep2(250);
     }
     return null;
@@ -4081,8 +4044,8 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
     void this.persist();
   }
   refreshQueueView() {
-    this.app.workspace.getLeavesOfType(PR_QUEUE_VIEW_TYPE).forEach((leaf) => {
-      if (leaf.view instanceof PrQueueView) leaf.view.render();
+    this.app.workspace.getLeavesOfType(PR_REVIEW_VIEW_TYPE).forEach((leaf) => {
+      if (leaf.view instanceof PrReviewView) leaf.view.render();
     });
   }
   /* --------------------------------------------------------------------- */
@@ -4090,8 +4053,8 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
   /* --------------------------------------------------------------------- */
   activeMarkdownView() {
     const recent = this.app.workspace.getMostRecentLeaf();
-    if (recent?.view instanceof import_obsidian7.MarkdownView) return recent.view;
-    return this.app.workspace.getActiveViewOfType(import_obsidian7.MarkdownView);
+    if (recent?.view instanceof import_obsidian6.MarkdownView) return recent.view;
+    return this.app.workspace.getActiveViewOfType(import_obsidian6.MarkdownView);
   }
   async onActiveFileChanged() {
     const view = this.activeMarkdownView();
@@ -4121,7 +4084,7 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
     }
     this.refreshComments();
     void this.refreshPrLocal();
-    if (view instanceof import_obsidian7.MarkdownView) void this.applyDiffToView(view);
+    if (view instanceof import_obsidian6.MarkdownView) void this.applyDiffToView(view);
   }
   /** Re-resolve anchors against the live editor and push marks + panel. */
   refreshComments() {
@@ -4253,8 +4216,8 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
     }
   }
   revealOtherComment(id) {
-    this.app.workspace.getLeavesOfType(COMMENT_PANEL_VIEW_TYPE).forEach((leaf) => {
-      if (leaf.view instanceof CommentPanelView) {
+    this.app.workspace.getLeavesOfType(PR_REVIEW_VIEW_TYPE).forEach((leaf) => {
+      if (leaf.view instanceof PrReviewView) {
         this.app.workspace.revealLeaf(leaf);
         leaf.view.revealOther(id);
       }
@@ -4290,7 +4253,7 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
     if (!cm) return;
     const r = resolveAnchor(cm.state.doc.toString(), comment.anchor);
     if (!r) {
-      new import_obsidian7.Notice("Anchor not found \u2014 the text may have changed (stale).");
+      new import_obsidian6.Notice("Anchor not found \u2014 the text may have changed (stale).");
       return;
     }
     cm.dispatch({ selection: { anchor: r.from, head: r.to }, scrollIntoView: true });
@@ -4348,23 +4311,23 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
     });
   }
   refreshCommentPanel() {
-    this.app.workspace.getLeavesOfType(COMMENT_PANEL_VIEW_TYPE).forEach((leaf) => {
-      if (leaf.view instanceof CommentPanelView) leaf.view.render();
+    this.app.workspace.getLeavesOfType(PR_REVIEW_VIEW_TYPE).forEach((leaf) => {
+      if (leaf.view instanceof PrReviewView) leaf.view.render();
     });
   }
   /** Reveal a comment in the panel (driven by clicking its line in the editor). */
   async revealComment(id) {
-    let leaf = this.app.workspace.getLeavesOfType(COMMENT_PANEL_VIEW_TYPE)[0] ?? null;
+    let leaf = this.app.workspace.getLeavesOfType(PR_REVIEW_VIEW_TYPE)[0] ?? null;
     if (!leaf) {
       const right = this.app.workspace.getRightLeaf(false);
       if (right) {
-        await right.setViewState({ type: COMMENT_PANEL_VIEW_TYPE, active: false });
+        await right.setViewState({ type: PR_REVIEW_VIEW_TYPE, active: false });
         leaf = right;
       }
     }
     if (!leaf) return;
     this.app.workspace.revealLeaf(leaf);
-    if (leaf.view instanceof CommentPanelView) leaf.view.highlight(id);
+    if (leaf.view instanceof PrReviewView) leaf.view.highlight(id);
   }
   async saveActiveSidecar() {
     if (!this.activeDoc) return;
@@ -4430,24 +4393,24 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
   async addCommentFromSelection() {
     const view = this.activeMarkdownView();
     if (!view || !view.file) {
-      new import_obsidian7.Notice("Open a markdown file first.");
+      new import_obsidian6.Notice("Open a markdown file first.");
       return;
     }
     const cm = this.cmOf(view);
     if (!cm) {
-      new import_obsidian7.Notice(
+      new import_obsidian6.Notice(
         "Switch to Live Preview or Source view to add comments (Reading view has no text selection)."
       );
       return;
     }
     if (!this.activeDoc) await this.onActiveFileChanged();
     if (!this.activeDoc) {
-      new import_obsidian7.Notice("This file is not inside a git repository.");
+      new import_obsidian6.Notice("This file is not inside a git repository.");
       return;
     }
     const sel = cm.state.selection.main;
     if (sel.empty) {
-      new import_obsidian7.Notice("Select the text to comment on first.");
+      new import_obsidian6.Notice("Select the text to comment on first.");
       return;
     }
     const docText = cm.state.doc.toString();
@@ -4483,7 +4446,7 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
     const item = this.activeItems.find((i) => i.comment.id === id);
     if (!cm || !item) return;
     if (!item.range) {
-      new import_obsidian7.Notice("Anchor not found \u2014 the text may have changed (stale).");
+      new import_obsidian6.Notice("Anchor not found \u2014 the text may have changed (stale).");
       return;
     }
     cm.dispatch({
@@ -4535,17 +4498,17 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
   async postReviewToGitHub() {
     const s = this.session;
     if (!s) {
-      new import_obsidian7.Notice("Open the PR from the queue first, then post the review.");
+      new import_obsidian6.Notice("Open the PR from the queue first, then post the review.");
       return;
     }
     const headSha = await prHeadSha(this.settings.ghPath, s.repoRoot, s.prNumber);
     if (!headSha) {
-      new import_obsidian7.Notice("Couldn't resolve the PR head commit.");
+      new import_obsidian6.Notice("Couldn't resolve the PR head commit.");
       return;
     }
     const target = await repoTarget(this.settings.ghPath, s.repoRoot);
     if (!target) {
-      new import_obsidian7.Notice("Couldn't resolve the repository on GitHub.");
+      new import_obsidian6.Notice("Couldn't resolve the repository on GitHub.");
       return;
     }
     const relPaths = Array.from(new Set(s.mdFiles));
@@ -4565,7 +4528,7 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
     }
     const pending = files.flatMap((f) => f.resolved).filter((rc) => rc.comment.status === "open" && !rc.comment.postedAt);
     if (pending.length === 0) {
-      new import_obsidian7.Notice("No open, un-posted comments to post.");
+      new import_obsidian6.Notice("No open, un-posted comments to post.");
       return;
     }
     const preview = buildReviewPayload(files, headSha, target.url);
@@ -4584,7 +4547,7 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
       event: choice.event,
       summary: choice.summary
     });
-    new import_obsidian7.Notice(
+    new import_obsidian6.Notice(
       `Posting ${built.inlineCount} inline + ${built.fallbackCount} summary comment(s) to PR #${s.prNumber}\u2026`
     );
     let result;
@@ -4613,14 +4576,14 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
             s.prNumber,
             bodyOnly.payload
           );
-          new import_obsidian7.Notice("Some comments couldn't anchor inline \u2014 posted them in the review summary.");
+          new import_obsidian6.Notice("Some comments couldn't anchor inline \u2014 posted them in the review summary.");
         } catch (e2) {
-          new import_obsidian7.Notice(`Post failed: ${e2.message}`);
+          new import_obsidian6.Notice(`Post failed: ${e2.message}`);
           console.error("[markdown-pr-review] postReview retry", e2);
           return;
         }
       } else {
-        new import_obsidian7.Notice(`Post failed: ${e.message}`);
+        new import_obsidian6.Notice(`Post failed: ${e.message}`);
         console.error("[markdown-pr-review] postReview", e);
         return;
       }
@@ -4652,7 +4615,7 @@ var MdPrReviewPlugin = class extends import_obsidian7.Plugin {
     this.reviewsByPr.delete(key);
     void this.loadOthersComments();
     void this.refreshPrLocal();
-    new import_obsidian7.Notice(`Posted review to PR #${s.prNumber}.`);
+    new import_obsidian6.Notice(`Posted review to PR #${s.prNumber}.`);
   }
   /* --------------------------------------------------------------------- */
   /* Persistence                                                            */
