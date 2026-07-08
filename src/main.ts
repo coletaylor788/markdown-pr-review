@@ -140,6 +140,7 @@ export default class MdPrReviewPlugin extends Plugin {
 	private othersComments = new Map<string, ReviewComment[]>();
 	private reviewsByPr = new Map<string, PrReview[]>();
 	private othersLoading = new Set<string>();
+	private prLocal: Array<{ relPath: string; comment: Comment }> = [];
 
 	async onload(): Promise<void> {
 		await this.loadPersisted();
@@ -453,6 +454,7 @@ export default class MdPrReviewPlugin extends Plugin {
 		await this.persist();
 		this.refreshQueueView();
 		void this.loadOthersComments();
+		void this.refreshPrLocal();
 
 		if (this.session.mdFiles.length === 0) {
 			new Notice(`PR #${pr.number} changes no markdown files.`);
@@ -620,7 +622,7 @@ export default class MdPrReviewPlugin extends Plugin {
 			setComments(
 				cm,
 				this.activeItems
-					.filter((i) => i.range)
+					.filter((i) => i.range && !i.comment.postedAt)
 					.map((i) => ({
 						id: i.comment.id,
 						from: i.range!.from,
@@ -667,6 +669,46 @@ export default class MdPrReviewPlugin extends Plugin {
 				(a, b) =>
 					(a.line ?? 0) - (b.line ?? 0) || a.createdAt.localeCompare(b.createdAt)
 			);
+	}
+
+	/** All of the PR's other-reviewer inline comments, across files. */
+	othersAll(): ReviewComment[] {
+		const key = this.sessionKey();
+		if (!key) return [];
+		return (this.othersComments.get(key) ?? [])
+			.slice()
+			.sort(
+				(a, b) =>
+					a.path.localeCompare(b.path) ||
+					(a.line ?? 0) - (b.line ?? 0) ||
+					a.createdAt.localeCompare(b.createdAt)
+			);
+	}
+
+	/** Your un-posted local comments across every file in the PR. */
+	prUnposted(): Array<{ relPath: string; comment: Comment }> {
+		return this.prLocal.filter((x) => !x.comment.postedAt);
+	}
+
+	/** Reload local sidecars for all of the PR's files (for the PR-wide panel). */
+	async refreshPrLocal(): Promise<void> {
+		const s = this.session;
+		if (!s) {
+			this.prLocal = [];
+			this.refreshCommentPanel();
+			return;
+		}
+		const out: Array<{ relPath: string; comment: Comment }> = [];
+		for (const rel of s.mdFiles) {
+			if (isHiddenPath(rel)) continue;
+			const comments =
+				this.activeDoc && this.activeDoc.relPath === rel
+					? this.activeDoc.sidecar.comments
+					: (await loadSidecar(s.repoRoot, this.settings.sidecarDir, rel)).comments;
+			for (const c of comments) out.push({ relPath: rel, comment: c });
+		}
+		this.prLocal = out;
+		this.refreshCommentPanel();
 	}
 
 	othersLoadingNow(): boolean {
@@ -743,6 +785,96 @@ export default class MdPrReviewPlugin extends Plugin {
 		const l = cm.state.doc.line(n);
 		cm.dispatch({ selection: { anchor: l.from, head: l.to }, scrollIntoView: true });
 		cm.focus();
+	}
+
+	/* ---- Cross-file navigation (PR-wide panel) ---- */
+
+	private async ensureFileOpen(relPath: string): Promise<void> {
+		const s = this.session;
+		if (!s) return;
+		if (this.activeDoc?.relPath === relPath) {
+			const v = this.activeMarkdownView();
+			if (v && this.cmOf(v)) return;
+		}
+		await this.openPrFile(s.vaultMount, relPath, s.baseRef);
+	}
+
+	async openFileAndJumpLine(relPath: string, line: number): Promise<void> {
+		await this.ensureFileOpen(relPath);
+		this.jumpToLine(line);
+	}
+
+	async openFileAndJumpAnchor(relPath: string, comment: Comment): Promise<void> {
+		await this.ensureFileOpen(relPath);
+		const view = this.activeMarkdownView();
+		const cm = view ? this.cmOf(view) : null;
+		if (!cm) return;
+		const r = resolveAnchor(cm.state.doc.toString(), comment.anchor);
+		if (!r) {
+			new Notice("Anchor not found — the text may have changed (stale).");
+			return;
+		}
+		cm.dispatch({ selection: { anchor: r.from, head: r.to }, scrollIntoView: true });
+		cm.focus();
+	}
+
+	/* ---- Local comment mutations by path (work across the PR's files) ---- */
+
+	private async withSidecar(
+		relPath: string,
+		mutate: (sc: Sidecar) => boolean
+	): Promise<void> {
+		const repoRoot = this.session?.repoRoot ?? this.activeDoc?.repoRoot;
+		if (!repoRoot) return;
+		if (this.activeDoc && this.activeDoc.relPath === relPath) {
+			if (mutate(this.activeDoc.sidecar)) {
+				await this.saveActiveSidecar();
+				this.refreshComments();
+			}
+		} else {
+			const sc = await loadSidecar(repoRoot, this.settings.sidecarDir, relPath);
+			if (mutate(sc)) {
+				await saveSidecar(repoRoot, this.settings.sidecarDir, relPath, sc);
+			}
+		}
+		await this.refreshPrLocal();
+	}
+
+	editCommentAt(relPath: string, id: string): void {
+		const comment = this.prLocal.find(
+			(x) => x.relPath === relPath && x.comment.id === id
+		)?.comment;
+		if (!comment) return;
+		new CommentModal(this.app, {
+			initial: comment.body,
+			quote: comment.anchor.quote,
+			onSubmit: async (body) => {
+				if (!body) return;
+				await this.withSidecar(relPath, (sc) => {
+					const c = sc.comments.find((c) => c.id === id);
+					if (!c) return false;
+					c.body = body;
+					return true;
+				});
+			},
+		}).open();
+	}
+
+	async toggleResolveAt(relPath: string, id: string): Promise<void> {
+		await this.withSidecar(relPath, (sc) => {
+			const c = sc.comments.find((c) => c.id === id);
+			if (!c) return false;
+			c.status = c.status === "resolved" ? "open" : "resolved";
+			return true;
+		});
+	}
+
+	async deleteCommentAt(relPath: string, id: string): Promise<void> {
+		await this.withSidecar(relPath, (sc) => {
+			const before = sc.comments.length;
+			sc.comments = sc.comments.filter((c) => c.id !== id);
+			return sc.comments.length !== before;
+		});
 	}
 
 	private refreshCommentPanel(): void {
@@ -883,6 +1015,7 @@ export default class MdPrReviewPlugin extends Plugin {
 					this.settings.sidecarDir
 				).catch(() => undefined);
 				this.refreshComments();
+				void this.refreshPrLocal();
 			},
 		}).open();
 	}
@@ -1078,6 +1211,7 @@ export default class MdPrReviewPlugin extends Plugin {
 		this.othersComments.delete(key);
 		this.reviewsByPr.delete(key);
 		void this.loadOthersComments();
+		void this.refreshPrLocal();
 		new Notice(`Posted review to PR #${s.prNumber}.`);
 	}
 

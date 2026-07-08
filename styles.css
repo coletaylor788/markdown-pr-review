@@ -386,6 +386,13 @@
 .mdpr-subsection {
 	border-top: none;
 }
+.mdpr-file-label {
+	font-size: var(--font-ui-small);
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
 .mdpr-other-head {
 	display: flex;
 	align-items: baseline;
