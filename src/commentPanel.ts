@@ -31,6 +31,7 @@ export class CommentPanelView extends ItemView {
 
 	async onOpen(): Promise<void> {
 		this.render();
+		void this.plugin.refreshPrLocal();
 	}
 	async onClose(): Promise<void> {}
 
@@ -71,9 +72,13 @@ export class CommentPanelView extends ItemView {
 		const reviews = session ? this.plugin.prReviews() : [];
 		const others = session ? this.plugin.othersAll() : [];
 		const loading = this.plugin.othersLoadingNow();
-		const unposted: LocalEntry[] = session
-			? this.plugin.prUnposted()
-			: this.activeDocUnposted();
+		// Always include the active file's comments directly (synchronously
+		// available), merged with the PR-wide cache so nothing disappears if the
+		// cache hasn't loaded yet.
+		const unposted: LocalEntry[] = this.mergeUnposted(
+			session ? this.plugin.prUnposted() : [],
+			this.activeDocUnposted()
+		);
 
 		this.renderReviewsWithComments(c, reviews, others, loading);
 		this.renderUnposted(c, unposted);
@@ -93,6 +98,11 @@ export class CommentPanelView extends ItemView {
 			.activeCommentItems()
 			.filter((i) => !i.comment.postedAt)
 			.map((i) => ({ relPath: doc.relPath, comment: i.comment }));
+	}
+
+	private mergeUnposted(a: LocalEntry[], b: LocalEntry[]): LocalEntry[] {
+		const seen = new Set(a.map((x) => x.comment.id));
+		return [...a, ...b.filter((x) => !seen.has(x.comment.id))];
 	}
 
 	/** A collapsible section; returns the body element, or null when collapsed. */

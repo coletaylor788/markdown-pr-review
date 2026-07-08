@@ -207,7 +207,10 @@ export default class MdPrReviewPlugin extends Plugin {
 				void this.onActiveFileChanged();
 			})
 		);
-		this.app.workspace.onLayoutReady(() => void this.onActiveFileChanged());
+		this.app.workspace.onLayoutReady(() => {
+			void this.onActiveFileChanged();
+			void this.refreshPrLocal();
+		});
 
 		// Clicking a commented line in the editor reveals it in the panel.
 		setCommentClickHandler((id) => void this.revealComment(id));
@@ -600,6 +603,7 @@ export default class MdPrReviewPlugin extends Plugin {
 			return;
 		}
 		this.refreshComments();
+		void this.refreshPrLocal();
 	}
 
 	/** Re-resolve anchors against the live editor and push marks + panel. */
