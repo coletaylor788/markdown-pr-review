@@ -11,6 +11,8 @@ export interface MdPrReviewSettings {
 	highlightLineBackground: boolean;
 	/** Hide PRs from the queue that change no markdown files. */
 	markdownOnlyQueue: boolean;
+	/** Comma-separated login substrings whose PR comments are hidden (e.g. "copilot"). */
+	hideCommentsFrom: string;
 	/** Executable for the GitHub CLI. */
 	ghPath: string;
 	/** Executable for git. */
@@ -24,6 +26,7 @@ export const DEFAULT_SETTINGS: MdPrReviewSettings = {
 	sidecarDir: ".pr-review",
 	highlightLineBackground: false,
 	markdownOnlyQueue: true,
+	hideCommentsFrom: "copilot",
 	ghPath: "gh",
 	gitPath: "git",
 };

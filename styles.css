@@ -339,6 +339,34 @@
 	box-shadow: inset 3px 0 0 var(--interactive-accent);
 }
 
+/* Others' (existing GitHub) comments */
+.mdpr-others-header {
+	padding: 8px 8px 4px;
+	font-size: var(--font-ui-smaller);
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--text-muted);
+	border-top: 1px solid var(--background-modifier-border);
+	margin-top: 4px;
+}
+.mdpr-other-head {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+}
+.mdpr-other-author {
+	font-size: var(--font-ui-small);
+	font-weight: 600;
+}
+.mdpr-other-line {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+.mdpr-other-row .mdpr-comment-body {
+	color: var(--text-normal);
+}
+
 .mdpr-comment-quote {
 	font-size: var(--font-ui-smaller);
 	color: var(--text-muted);

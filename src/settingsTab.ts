@@ -65,6 +65,21 @@ export class MdPrReviewSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
+			.setName("Hide comments from")
+			.setDesc(
+				"Comma-separated login substrings whose PR comments are hidden (case-insensitive). e.g. \"copilot\"."
+			)
+			.addText((t) =>
+				t
+					.setPlaceholder("copilot")
+					.setValue(this.plugin.settings.hideCommentsFrom)
+					.onChange(async (v) => {
+						this.plugin.settings.hideCommentsFrom = v;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
 			.setName("Sidecar directory")
 			.setDesc("Folder (relative to repo root) for gitignored comment sidecars.")
 			.addText((t) =>

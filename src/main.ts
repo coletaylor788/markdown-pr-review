@@ -49,6 +49,8 @@ import {
 	checkoutPullRequest,
 	prHeadSha,
 	repoTarget,
+	listReviewComments,
+	ReviewComment,
 } from "./github";
 import {
 	resolveDocComments,
@@ -117,6 +119,8 @@ export default class MdPrReviewPlugin extends Plugin {
 	private activeItems: ActiveCommentItem[] = [];
 	private currentRepoRoot: string | null = null;
 	private activeFileKey: string | null = null;
+	private othersComments = new Map<string, ReviewComment[]>();
+	private othersLoading = new Set<string>();
 
 	async onload(): Promise<void> {
 		await this.loadPersisted();
@@ -400,6 +404,7 @@ export default class MdPrReviewPlugin extends Plugin {
 		};
 		await this.persist();
 		this.refreshQueueView();
+		void this.loadOthersComments();
 
 		if (this.session.mdFiles.length === 0) {
 			new Notice(`PR #${pr.number} changes no markdown files.`);
@@ -581,6 +586,78 @@ export default class MdPrReviewPlugin extends Plugin {
 
 	activeCommentItems(): ActiveCommentItem[] {
 		return this.activeItems;
+	}
+
+	/* ---- Others' comments (existing GitHub review comments) ---- */
+
+	private sessionKey(): string | null {
+		const s = this.session;
+		return s ? `${s.repoRoot}#${s.prNumber}` : null;
+	}
+
+	othersForActiveDoc(): ReviewComment[] {
+		const key = this.sessionKey();
+		const doc = this.activeDoc;
+		if (!key || !doc) return [];
+		const all = this.othersComments.get(key);
+		if (!all) return [];
+		return all
+			.filter((c) => c.path === doc.relPath)
+			.sort(
+				(a, b) =>
+					(a.line ?? 0) - (b.line ?? 0) || a.createdAt.localeCompare(b.createdAt)
+			);
+	}
+
+	othersLoadingNow(): boolean {
+		const key = this.sessionKey();
+		return !!key && this.othersLoading.has(key) && !this.othersComments.has(key);
+	}
+
+	private hiddenAuthorPatterns(): string[] {
+		return this.settings.hideCommentsFrom
+			.split(",")
+			.map((p) => p.trim().toLowerCase())
+			.filter(Boolean);
+	}
+
+	async loadOthersComments(force = false): Promise<void> {
+		const s = this.session;
+		const key = this.sessionKey();
+		if (!s || !key) return;
+		if (!force && (this.othersComments.has(key) || this.othersLoading.has(key))) return;
+		this.othersLoading.add(key);
+		this.refreshCommentPanel();
+		try {
+			const target = await repoTarget(this.settings.ghPath, s.repoRoot);
+			if (!target) return;
+			const all = await listReviewComments(
+				this.settings.ghPath,
+				target.host,
+				target.nameWithOwner,
+				s.prNumber
+			);
+			const patterns = this.hiddenAuthorPatterns();
+			this.othersComments.set(
+				key,
+				all.filter((c) => !patterns.some((p) => c.login.toLowerCase().includes(p)))
+			);
+		} catch (e) {
+			console.error("[markdown-pr-review] loadOthersComments", e);
+		} finally {
+			this.othersLoading.delete(key);
+			this.refreshCommentPanel();
+		}
+	}
+
+	jumpToLine(line: number): void {
+		const view = this.activeMarkdownView();
+		const cm = view ? this.cmOf(view) : null;
+		if (!cm) return;
+		const n = Math.min(Math.max(line, 1), cm.state.doc.lines);
+		const l = cm.state.doc.line(n);
+		cm.dispatch({ selection: { anchor: l.from, head: l.to }, scrollIntoView: true });
+		cm.focus();
 	}
 
 	private refreshCommentPanel(): void {

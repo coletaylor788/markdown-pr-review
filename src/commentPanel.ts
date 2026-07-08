@@ -1,5 +1,6 @@
 import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
 import type MdPrReviewPlugin from "./main";
+import type { ActiveCommentItem } from "./main";
 
 export const COMMENT_PANEL_VIEW_TYPE = "mdpr-comments";
 
@@ -57,59 +58,89 @@ export class CommentPanelView extends ItemView {
 			return;
 		}
 
+		// Kick off (cached) fetch of others' PR comments.
+		void this.plugin.loadOthersComments();
+
 		const items = this.plugin.activeCommentItems();
 		if (items.length === 0) {
 			c.createDiv({
 				cls: "mdpr-queue-status",
 				text: "No comments yet. Select text in the editor and add one.",
 			});
-			return;
+		} else {
+			const list = c.createDiv({ cls: "mdpr-comments-list" });
+			for (const item of items) this.renderLocalComment(list, item);
 		}
 
-		const list = c.createDiv({ cls: "mdpr-comments-list" });
-		for (const item of items) {
-			const row = list.createDiv({
-				cls: "mdpr-comment-row",
-				attr: { "data-mdpr-row": item.comment.id },
-			});
-			if (item.comment.status === "resolved") row.addClass("mdpr-resolved");
-			if (!item.range) row.addClass("mdpr-stale");
+		this.renderOthers(c);
+	}
 
-			const quote = truncate(item.comment.anchor.quote, 90);
-			row.createDiv({ cls: "mdpr-comment-quote", text: quote });
-			row.createDiv({ cls: "mdpr-comment-body", text: item.comment.body });
+	private renderLocalComment(list: HTMLElement, item: ActiveCommentItem): void {
+		const row = list.createDiv({
+			cls: "mdpr-comment-row",
+			attr: { "data-mdpr-row": item.comment.id },
+		});
+		if (item.comment.status === "resolved") row.addClass("mdpr-resolved");
+		if (!item.range) row.addClass("mdpr-stale");
 
-			const placement = item.comment.placement;
-			const posted = !!item.comment.postedAt;
-			if (posted) row.addClass("mdpr-posted");
-			if (!item.range || placement || posted) {
-				const tags = row.createDiv({ cls: "mdpr-comment-tags" });
-				if (!item.range) tags.createSpan({ cls: "mdpr-stale-tag", text: "stale" });
-				if (placement) {
-					tags.createSpan({
-						cls: `mdpr-place-tag mdpr-place-${placement}`,
-						text: placement === "inline" ? "inline" : "fallback",
-					});
-				}
-				if (posted) tags.createSpan({ cls: "mdpr-posted-tag", text: "posted" });
+		row.createDiv({ cls: "mdpr-comment-quote", text: truncate(item.comment.anchor.quote, 90) });
+		row.createDiv({ cls: "mdpr-comment-body", text: item.comment.body });
+
+		const placement = item.comment.placement;
+		const posted = !!item.comment.postedAt;
+		if (posted) row.addClass("mdpr-posted");
+		if (!item.range || placement || posted) {
+			const tags = row.createDiv({ cls: "mdpr-comment-tags" });
+			if (!item.range) tags.createSpan({ cls: "mdpr-stale-tag", text: "stale" });
+			if (placement) {
+				tags.createSpan({
+					cls: `mdpr-place-tag mdpr-place-${placement}`,
+					text: placement === "inline" ? "inline" : "fallback",
+				});
 			}
+			if (posted) tags.createSpan({ cls: "mdpr-posted-tag", text: "posted" });
+		}
 
-			const actions = row.createDiv({ cls: "mdpr-comment-actions" });
-			const id = item.comment.id;
-			this.iconButton(actions, "crosshair", "Jump to anchor", () =>
-				this.plugin.jumpToComment(id)
-			);
-			const resolved = item.comment.status === "resolved";
-			this.iconButton(
-				actions,
-				resolved ? "rotate-ccw" : "check",
-				resolved ? "Reopen" : "Resolve",
-				() => void this.plugin.toggleResolveComment(id)
-			);
-			this.iconButton(actions, "pencil", "Edit", () => this.plugin.editComment(id));
-			this.iconButton(actions, "trash-2", "Delete", () =>
-				void this.plugin.deleteComment(id)
-			);
+		const actions = row.createDiv({ cls: "mdpr-comment-actions" });
+		const id = item.comment.id;
+		this.iconButton(actions, "crosshair", "Jump to anchor", () =>
+			this.plugin.jumpToComment(id)
+		);
+		const resolved = item.comment.status === "resolved";
+		this.iconButton(
+			actions,
+			resolved ? "rotate-ccw" : "check",
+			resolved ? "Reopen" : "Resolve",
+			() => void this.plugin.toggleResolveComment(id)
+		);
+		this.iconButton(actions, "pencil", "Edit", () => this.plugin.editComment(id));
+		this.iconButton(actions, "trash-2", "Delete", () => void this.plugin.deleteComment(id));
+	}
+
+	private renderOthers(c: HTMLElement): void {
+		const others = this.plugin.othersForActiveDoc();
+		const loading = this.plugin.othersLoadingNow();
+		if (!loading && others.length === 0) return;
+
+		c.createDiv({ cls: "mdpr-others-header", text: "Others' comments" });
+		if (loading) {
+			c.createDiv({ cls: "mdpr-queue-status", text: "Loading…" });
+			return;
+		}
+		const list = c.createDiv({ cls: "mdpr-comments-list" });
+		for (const rc of others) {
+			const row = list.createDiv({ cls: "mdpr-comment-row mdpr-other-row" });
+			const head = row.createDiv({ cls: "mdpr-other-head" });
+			head.createSpan({ cls: "mdpr-other-author", text: rc.login });
+			if (rc.line) head.createSpan({ cls: "mdpr-other-line", text: `L${rc.line}` });
+			row.createDiv({ cls: "mdpr-comment-body", text: rc.body });
+			if (rc.line) {
+				const actions = row.createDiv({ cls: "mdpr-comment-actions" });
+				const line = rc.line;
+				this.iconButton(actions, "crosshair", "Jump to line", () =>
+					this.plugin.jumpToLine(line)
+				);
+			}
 		}
 	}
 

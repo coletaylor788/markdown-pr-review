@@ -123,3 +123,50 @@ export async function repoTarget(
 		return null;
 	}
 }
+
+export interface ReviewComment {
+	id: number;
+	login: string;
+	path: string;
+	line: number | null;
+	body: string;
+	createdAt: string;
+	inReplyToId: number | null;
+}
+
+/** Existing inline review comments on a PR (up to 100). */
+export async function listReviewComments(
+	ghPath: string,
+	host: string,
+	nameWithOwner: string,
+	prNumber: number
+): Promise<ReviewComment[]> {
+	const res = await run(
+		ghPath,
+		[
+			"api",
+			"--hostname",
+			host,
+			`repos/${nameWithOwner}/pulls/${prNumber}/comments?per_page=100`,
+		],
+		{ timeoutMs: 30000 }
+	);
+	if (res.code !== 0) {
+		throw new GhError(res.stderr.trim() || "gh api pulls/comments failed");
+	}
+	try {
+		const arr = JSON.parse(res.stdout) as Array<Record<string, unknown>>;
+		if (!Array.isArray(arr)) return [];
+		return arr.map((c) => ({
+			id: Number(c.id),
+			login: ((c.user as { login?: string })?.login ?? "?") as string,
+			path: (c.path as string) ?? "",
+			line: (c.line as number) ?? (c.original_line as number) ?? null,
+			body: (c.body as string) ?? "",
+			createdAt: (c.created_at as string) ?? "",
+			inReplyToId: (c.in_reply_to_id as number) ?? null,
+		}));
+	} catch (e) {
+		throw new GhError("Could not parse review comments: " + String(e));
+	}
+}
