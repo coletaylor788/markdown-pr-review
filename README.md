@@ -28,6 +28,19 @@ Early development. Built in phases:
 - **P3** — comments + sidecar + anchoring
 - **P4** — diff-aware comment classification + final sidecar schema
 
+## Install
+
+The built plugin (`main.js`, `manifest.json`, `styles.css`) is committed to the
+repo, so you can install it straight from git — no build step needed:
+
+```bash
+git clone https://github.com/coletaylor788/markdown-pr-review.git \
+  /path/to/vault/.obsidian/plugins/markdown-pr-review
+```
+
+Then in Obsidian: **Settings → Community plugins → Reload**, and enable
+**Markdown PR Review**. To update later, `git pull` in that folder and reload.
+
 ## Development
 
 ```bash
@@ -36,13 +49,34 @@ npm run dev      # watch build -> main.js
 npm run build    # typecheck + production build
 ```
 
-To test, symlink the repo into a vault's plugins folder:
+To hack on it, symlink the repo into a vault's plugins folder instead of cloning:
 
 ```bash
 ln -s "$(pwd)" /path/to/vault/.obsidian/plugins/markdown-pr-review
 ```
 
 then enable the plugin in Obsidian and reload.
+
+## Releasing (pushing a new version)
+
+`main.js` is tracked in git, so a "release" is just building and committing the
+bundle. No CI is involved.
+
+```bash
+npm run build                       # 1. produce a fresh production main.js
+npm version patch --no-git-tag-version   # 2. bump version in package.json;
+                                    #    the "version" script updates manifest.json
+                                    #    + versions.json and stages them
+git add -A                          # 3. include the rebuilt main.js
+git commit -m "Release v$(node -p "require('./manifest.json').version")"
+git tag "$(node -p "require('./manifest.json').version")"   # 4. optional tag
+git push --follow-tags
+```
+
+Use `minor` or `major` instead of `patch` as appropriate. Anyone who has cloned
+the repo picks up the new version with `git pull` + reload. (A tag also lets you
+`gh release create <tag> main.js manifest.json styles.css` if you want a
+BRAT-installable release.)
 
 ## Sidecar format
 
