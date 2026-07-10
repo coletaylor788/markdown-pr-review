@@ -426,6 +426,11 @@
 .mdpr-other-row .mdpr-comment-body {
 	color: var(--text-normal);
 }
+.mdpr-comment-row.mdpr-reply {
+	border-left: 2px solid var(--background-modifier-border);
+	padding-left: 8px;
+	margin-top: 2px;
+}
 
 /* PR review summaries */
 .mdpr-review-state {

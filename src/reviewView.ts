@@ -408,10 +408,27 @@ export class PrReviewView extends ItemView {
 		others: ReviewComment[],
 		loading: boolean
 	): void {
+		// Thread replies under the comment they reply to (in_reply_to_id).
+		const byId = new Map<number, ReviewComment>();
+		for (const rc of others) byId.set(rc.id, rc);
+		const repliesByParent = new Map<number, ReviewComment[]>();
+		const roots: ReviewComment[] = [];
+		for (const rc of others) {
+			if (rc.inReplyToId != null && byId.has(rc.inReplyToId)) {
+				const arr = repliesByParent.get(rc.inReplyToId) ?? [];
+				arr.push(rc);
+				repliesByParent.set(rc.inReplyToId, arr);
+			} else {
+				roots.push(rc);
+			}
+		}
+
+		// Only ROOT comments group under a review; replies nest under their root,
+		// so a reply's own (empty) review doesn't show as a separate entry.
 		const reviewIds = new Set(reviews.map((r) => r.id));
 		const byReview = new Map<number, ReviewComment[]>();
 		const orphans: ReviewComment[] = [];
-		for (const rc of others) {
+		for (const rc of roots) {
 			if (rc.reviewId != null && reviewIds.has(rc.reviewId)) {
 				const arr = byReview.get(rc.reviewId) ?? [];
 				arr.push(rc);
@@ -453,7 +470,9 @@ export class PrReviewView extends ItemView {
 			);
 			if (!sub) continue;
 			if (r.body.trim()) sub.createDiv({ cls: "mdpr-review-body", text: r.body });
-			for (const rc of byReview.get(r.id) ?? []) this.renderInlineComment(sub, rc);
+			for (const rc of byReview.get(r.id) ?? []) {
+				this.renderInlineComment(sub, rc, repliesByParent, 0);
+			}
 		}
 		if (orphans.length) {
 			const sub = this.collapsible(
@@ -465,26 +484,42 @@ export class PrReviewView extends ItemView {
 				},
 				"mdpr-subsection"
 			);
-			if (sub) for (const rc of orphans) this.renderInlineComment(sub, rc);
+			if (sub) for (const rc of orphans) this.renderInlineComment(sub, rc, repliesByParent, 0);
 		}
 	}
 
-	private renderInlineComment(parent: HTMLElement, rc: ReviewComment): void {
+	private renderInlineComment(
+		parent: HTMLElement,
+		rc: ReviewComment,
+		repliesByParent: Map<number, ReviewComment[]>,
+		depth: number
+	): void {
 		const row = parent.createDiv({
-			cls: "mdpr-comment-row mdpr-other-row",
+			cls: "mdpr-comment-row mdpr-other-row" + (depth > 0 ? " mdpr-reply" : ""),
 			attr: { "data-mdpr-other-row": String(rc.id) },
 		});
+		if (depth > 0) row.style.marginLeft = `${depth * 10}px`;
 		const head = row.createDiv({ cls: "mdpr-other-head" });
-		head.createSpan({ cls: "mdpr-file-label", text: fileBase(rc.path), attr: { "aria-label": rc.path } });
+		head.createSpan({ cls: "mdpr-other-author", text: rc.login });
+		if (depth === 0) {
+			head.createSpan({
+				cls: "mdpr-file-label",
+				text: fileBase(rc.path),
+				attr: { "aria-label": rc.path },
+			});
+		}
 		if (rc.line) head.createSpan({ cls: "mdpr-other-line", text: `L${rc.line}` });
 		row.createDiv({ cls: "mdpr-comment-body", text: rc.body });
-		if (rc.line != null) {
+		if (rc.line != null && depth === 0) {
 			const act = row.createDiv({ cls: "mdpr-comment-actions" });
 			const line = rc.line;
 			const p = rc.path;
 			this.iconButton(act, "crosshair", "Open file at line", () =>
 				void this.plugin.openFileAndJumpLine(p, line)
 			);
+		}
+		for (const reply of repliesByParent.get(rc.id) ?? []) {
+			this.renderInlineComment(parent, reply, repliesByParent, depth + 1);
 		}
 	}
 
@@ -561,12 +596,20 @@ export class PrReviewView extends ItemView {
 	}
 
 	revealOther(id: string): void {
-		const rc = this.plugin.othersAll().find((c) => String(c.id) === id);
+		const all = this.plugin.othersAll();
+		const byId = new Map<number, ReviewComment>(all.map((c) => [c.id, c]));
+		const rc = all.find((c) => String(c.id) === id);
 		if (!rc) return;
+		// Walk replies up to the root comment (whose review is the shown one).
+		let root = rc;
+		let guard = 0;
+		while (root.inReplyToId != null && byId.has(root.inReplyToId) && guard++ < 50) {
+			root = byId.get(root.inReplyToId)!;
+		}
 		const reviewIds = new Set(this.plugin.prReviews().map((r) => r.id));
 		const key =
-			rc.reviewId != null && reviewIds.has(rc.reviewId)
-				? `review:${rc.reviewId}`
+			root.reviewId != null && reviewIds.has(root.reviewId)
+				? `review:${root.reviewId}`
 				: "review:orphan";
 		this.collapsed.delete("reviews");
 		this.collapsed.delete(key);

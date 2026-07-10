@@ -3266,10 +3266,23 @@ var PrReviewView = class extends import_obsidian4.ItemView {
     return [...a, ...b.filter((x) => !seen.has(x.comment.id))];
   }
   renderReviewsWithComments(c, reviews, others, loading) {
+    const byId = /* @__PURE__ */ new Map();
+    for (const rc of others) byId.set(rc.id, rc);
+    const repliesByParent = /* @__PURE__ */ new Map();
+    const roots = [];
+    for (const rc of others) {
+      if (rc.inReplyToId != null && byId.has(rc.inReplyToId)) {
+        const arr = repliesByParent.get(rc.inReplyToId) ?? [];
+        arr.push(rc);
+        repliesByParent.set(rc.inReplyToId, arr);
+      } else {
+        roots.push(rc);
+      }
+    }
     const reviewIds = new Set(reviews.map((r) => r.id));
     const byReview = /* @__PURE__ */ new Map();
     const orphans = [];
-    for (const rc of others) {
+    for (const rc of roots) {
       if (rc.reviewId != null && reviewIds.has(rc.reviewId)) {
         const arr = byReview.get(rc.reviewId) ?? [];
         arr.push(rc);
@@ -3311,7 +3324,9 @@ var PrReviewView = class extends import_obsidian4.ItemView {
       );
       if (!sub) continue;
       if (r.body.trim()) sub.createDiv({ cls: "mdpr-review-body", text: r.body });
-      for (const rc of byReview.get(r.id) ?? []) this.renderInlineComment(sub, rc);
+      for (const rc of byReview.get(r.id) ?? []) {
+        this.renderInlineComment(sub, rc, repliesByParent, 0);
+      }
     }
     if (orphans.length) {
       const sub = this.collapsible(
@@ -3323,19 +3338,27 @@ var PrReviewView = class extends import_obsidian4.ItemView {
         },
         "mdpr-subsection"
       );
-      if (sub) for (const rc of orphans) this.renderInlineComment(sub, rc);
+      if (sub) for (const rc of orphans) this.renderInlineComment(sub, rc, repliesByParent, 0);
     }
   }
-  renderInlineComment(parent, rc) {
+  renderInlineComment(parent, rc, repliesByParent, depth) {
     const row = parent.createDiv({
-      cls: "mdpr-comment-row mdpr-other-row",
+      cls: "mdpr-comment-row mdpr-other-row" + (depth > 0 ? " mdpr-reply" : ""),
       attr: { "data-mdpr-other-row": String(rc.id) }
     });
+    if (depth > 0) row.style.marginLeft = `${depth * 10}px`;
     const head = row.createDiv({ cls: "mdpr-other-head" });
-    head.createSpan({ cls: "mdpr-file-label", text: fileBase(rc.path), attr: { "aria-label": rc.path } });
+    head.createSpan({ cls: "mdpr-other-author", text: rc.login });
+    if (depth === 0) {
+      head.createSpan({
+        cls: "mdpr-file-label",
+        text: fileBase(rc.path),
+        attr: { "aria-label": rc.path }
+      });
+    }
     if (rc.line) head.createSpan({ cls: "mdpr-other-line", text: `L${rc.line}` });
     row.createDiv({ cls: "mdpr-comment-body", text: rc.body });
-    if (rc.line != null) {
+    if (rc.line != null && depth === 0) {
       const act = row.createDiv({ cls: "mdpr-comment-actions" });
       const line = rc.line;
       const p = rc.path;
@@ -3345,6 +3368,9 @@ var PrReviewView = class extends import_obsidian4.ItemView {
         "Open file at line",
         () => void this.plugin.openFileAndJumpLine(p, line)
       );
+    }
+    for (const reply of repliesByParent.get(rc.id) ?? []) {
+      this.renderInlineComment(parent, reply, repliesByParent, depth + 1);
     }
   }
   renderUnposted(c, unposted) {
@@ -3424,10 +3450,17 @@ var PrReviewView = class extends import_obsidian4.ItemView {
     this.flash(`.mdpr-comment-row[data-mdpr-row="${id}"]`);
   }
   revealOther(id) {
-    const rc = this.plugin.othersAll().find((c) => String(c.id) === id);
+    const all = this.plugin.othersAll();
+    const byId = new Map(all.map((c) => [c.id, c]));
+    const rc = all.find((c) => String(c.id) === id);
     if (!rc) return;
+    let root = rc;
+    let guard = 0;
+    while (root.inReplyToId != null && byId.has(root.inReplyToId) && guard++ < 50) {
+      root = byId.get(root.inReplyToId);
+    }
     const reviewIds = new Set(this.plugin.prReviews().map((r) => r.id));
-    const key = rc.reviewId != null && reviewIds.has(rc.reviewId) ? `review:${rc.reviewId}` : "review:orphan";
+    const key = root.reviewId != null && reviewIds.has(root.reviewId) ? `review:${root.reviewId}` : "review:orphan";
     this.collapsed.delete("reviews");
     this.collapsed.delete(key);
     this.render();
