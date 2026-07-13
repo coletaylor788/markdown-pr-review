@@ -2466,6 +2466,19 @@ async function listPullRequests(ghPath, repoRoot, opts) {
     throw new GhError("Could not parse gh output: " + String(e));
   }
 }
+async function getPullRequest(ghPath, repoRoot, prNumber) {
+  const res = await run(ghPath, ["pr", "view", String(prNumber), "--json", LIST_FIELDS], {
+    cwd: repoRoot,
+    timeoutMs: 3e4,
+    retries: 2
+  });
+  if (res.code !== 0) return null;
+  try {
+    return JSON.parse(res.stdout);
+  } catch {
+    return null;
+  }
+}
 async function currentUser(ghPath, repoRoot) {
   const res = await run(ghPath, ["api", "user", "--jq", ".login"], {
     cwd: repoRoot,
@@ -2935,6 +2948,7 @@ var PrReviewView = class extends import_obsidian4.ItemView {
     this.searchFilter = "";
     this.loading = false;
     this.errorMsg = "";
+    this.numberLookup = false;
     this.myLogin = null;
     this.myLoginResolved = false;
     this.collapsed = /* @__PURE__ */ new Set();
@@ -2979,9 +2993,22 @@ var PrReviewView = class extends import_obsidian4.ItemView {
         this.myLogin = await currentUser(this.plugin.settings.ghPath, repo.repoRoot);
         this.myLoginResolved = true;
       }
-      this.prs = await listPullRequests(this.plugin.settings.ghPath, repo.repoRoot, {
-        search: this.searchFilter
-      });
+      this.numberLookup = false;
+      const numMatch = this.searchFilter.trim().match(/^#?(\d+)$/);
+      if (numMatch) {
+        this.numberLookup = true;
+        const pr = await getPullRequest(
+          this.plugin.settings.ghPath,
+          repo.repoRoot,
+          parseInt(numMatch[1], 10)
+        );
+        this.prs = pr ? [pr] : [];
+        if (!pr) this.errorMsg = `PR #${numMatch[1]} not found.`;
+      } else {
+        this.prs = await listPullRequests(this.plugin.settings.ghPath, repo.repoRoot, {
+          search: this.searchFilter
+        });
+      }
     } catch (e) {
       this.errorMsg = e.message;
       this.prs = [];
@@ -3038,6 +3065,7 @@ var PrReviewView = class extends import_obsidian4.ItemView {
     return login.includes(needle) || name.includes(needle);
   }
   visiblePrs() {
+    if (this.numberLookup) return this.prs;
     let list = this.prs;
     if (this.plugin.settings.markdownOnlyQueue) {
       list = list.filter((pr) => markdownFiles(pr).length > 0);
@@ -3099,7 +3127,7 @@ var PrReviewView = class extends import_obsidian4.ItemView {
     };
     const searchInput = header.createEl("input", {
       cls: "mdpr-input",
-      attr: { type: "text", placeholder: 'gh search (e.g. "label:design") \u2014 Enter' }
+      attr: { type: "text", placeholder: "PR # \xB7 or gh search (label:\u2026) \u2014 Enter" }
     });
     searchInput.value = this.searchFilter;
     searchInput.oninput = () => this.searchFilter = searchInput.value;

@@ -3,7 +3,7 @@ import type MdPrReviewPlugin from "./main";
 import type { RepoRef } from "./main";
 import type { ReviewComment } from "./github";
 import type { Comment } from "./sidecar";
-import { PullRequest, listPullRequests, markdownFiles, currentUser } from "./github";
+import { PullRequest, listPullRequests, getPullRequest, markdownFiles, currentUser } from "./github";
 import { buildFileTree, isHiddenPath, TreeNode } from "./fileTree";
 
 export const PR_REVIEW_VIEW_TYPE = "mdpr-review";
@@ -22,6 +22,7 @@ export class PrReviewView extends ItemView {
 	private searchFilter = "";
 	private loading = false;
 	private errorMsg = "";
+	private numberLookup = false;
 	private myLogin: string | null = null;
 	private myLoginResolved = false;
 	private collapsed = new Set<string>();
@@ -71,9 +72,25 @@ export class PrReviewView extends ItemView {
 				this.myLogin = await currentUser(this.plugin.settings.ghPath, repo.repoRoot);
 				this.myLoginResolved = true;
 			}
-			this.prs = await listPullRequests(this.plugin.settings.ghPath, repo.repoRoot, {
-				search: this.searchFilter,
-			});
+			this.numberLookup = false;
+			// A bare PR number looks it up directly, so it's found regardless of
+			// the list limit or draft state (repos with hundreds of PRs), and
+			// bypasses the author / markdown-only filters.
+			const numMatch = this.searchFilter.trim().match(/^#?(\d+)$/);
+			if (numMatch) {
+				this.numberLookup = true;
+				const pr = await getPullRequest(
+					this.plugin.settings.ghPath,
+					repo.repoRoot,
+					parseInt(numMatch[1], 10)
+				);
+				this.prs = pr ? [pr] : [];
+				if (!pr) this.errorMsg = `PR #${numMatch[1]} not found.`;
+			} else {
+				this.prs = await listPullRequests(this.plugin.settings.ghPath, repo.repoRoot, {
+					search: this.searchFilter,
+				});
+			}
 		} catch (e) {
 			this.errorMsg = (e as Error).message;
 			this.prs = [];
@@ -145,6 +162,7 @@ export class PrReviewView extends ItemView {
 	}
 
 	private visiblePrs(): PullRequest[] {
+		if (this.numberLookup) return this.prs; // explicit lookup — show as-is
 		let list = this.prs;
 		if (this.plugin.settings.markdownOnlyQueue) {
 			list = list.filter((pr) => markdownFiles(pr).length > 0);
@@ -211,7 +229,7 @@ export class PrReviewView extends ItemView {
 
 		const searchInput = header.createEl("input", {
 			cls: "mdpr-input",
-			attr: { type: "text", placeholder: 'gh search (e.g. "label:design") — Enter' },
+			attr: { type: "text", placeholder: "PR # · or gh search (label:…) — Enter" },
 		});
 		searchInput.value = this.searchFilter;
 		searchInput.oninput = () => (this.searchFilter = searchInput.value);

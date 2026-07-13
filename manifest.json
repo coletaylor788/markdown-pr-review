@@ -1,7 +1,7 @@
 {
 	"id": "markdown-pr-review",
 	"name": "Markdown PR Review",
-	"version": "0.3.1",
+	"version": "0.3.2",
 	"minAppVersion": "1.5.0",
 	"description": "Review GitHub markdown pull requests inside Obsidian: pick PRs from a filterable queue, highlight diff lines against the PR base, comment inline in a gitignored sidecar, and post the batched review — all without leaving the vault.",
 	"author": "Cole Taylor",

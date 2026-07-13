@@ -66,6 +66,25 @@ export async function listPullRequests(
 	}
 }
 
+/** Fetch a single PR by number (finds it regardless of the list limit / draft state). */
+export async function getPullRequest(
+	ghPath: string,
+	repoRoot: string,
+	prNumber: number
+): Promise<PullRequest | null> {
+	const res = await run(ghPath, ["pr", "view", String(prNumber), "--json", LIST_FIELDS], {
+		cwd: repoRoot,
+		timeoutMs: 30000,
+		retries: 2,
+	});
+	if (res.code !== 0) return null;
+	try {
+		return JSON.parse(res.stdout) as PullRequest;
+	} catch {
+		return null;
+	}
+}
+
 /** The authenticated user's login (for resolving the "@me" author filter). */
 export async function currentUser(
 	ghPath: string,
